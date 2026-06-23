@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # S.A.M. SCHEDULER  (Smart Agent Management - Orchestrator)
 # VERSION     : 3.0.0
 # FILE        : SAM_Scheduler.ps1
@@ -126,18 +126,20 @@ function Install-SAMTasks {
 
     # --------------------------------------------------
     # TASK 1: SAM_Agent_Sync — เก็บข้อมูล + Delta Sync
-    #   ทุก Startup + ทุก 2 ชั่วโมง (08:00 - 22:00)
+    #   ทุก Startup + ทุก 2 ชั่วโมง ตลอด 24 ชม.
+    #   StartWhenAvailable = ถ้าพลาดเวลา (เครื่องปิดอยู่)
+    #   จะรันทันทีที่เปิดเครื่องครั้งถัดไป
     # --------------------------------------------------
     $T1_Startup = New-ScheduledTaskTrigger -AtStartup
-    $T1_Repeat  = New-ScheduledTaskTrigger -Once -At "08:00AM" `
+    $T1_Repeat  = New-ScheduledTaskTrigger -Once -At "00:00AM" `
                       -RepetitionInterval (New-TimeSpan -Hours 2) `
-                      -RepetitionDuration (New-TimeSpan -Hours 14)
+                      -RepetitionDuration ([TimeSpan]::MaxValue)
     Register-SAMTask `
         -TaskName    $TASK_AGENT_SYNC `
         -ScriptFile  $AgentScript `
         -ExtraArgs   "-Silent -DeltaOnly" `
         -Triggers    @($T1_Startup, $T1_Repeat) `
-        -Description "SAM: Collect system data and send Delta Sync every 2 hours"
+        -Description "SAM: Collect system data and send Delta Sync every 2 hours (24hr coverage)"
 
     # --------------------------------------------------
     # TASK 2: SAM_C2_Poll — ดึง Remote Command จาก Cloud
@@ -156,6 +158,7 @@ function Install-SAMTasks {
     # --------------------------------------------------
     # TASK 3: SAM_FullSync_Daily — Force FullSync ทุก 2 วัน
     #   ทำงาน 02:00 AM วันคู่ (Mon, Wed, Fri, Sun)
+    #   StartWhenAvailable = ถ้าเครื่องปิดตี2 จะรันพอเปิดเครื่อง
     # --------------------------------------------------
     $T3 = New-ScheduledTaskTrigger -Weekly `
               -DaysOfWeek Monday,Wednesday,Friday,Sunday `
@@ -165,7 +168,7 @@ function Install-SAMTasks {
         -ScriptFile  $AgentScript `
         -ExtraArgs   "-Silent -ForceFullSync" `
         -Triggers    @($T3) `
-        -Description "SAM: Force Full Sync every 2 days"
+        -Description "SAM: Force Full Sync every 2 days (StartWhenAvailable)"
 
     # --------------------------------------------------
     # TASK 4: SAM_Update_Check — ตรวจอัปเดต + Self-Heal
@@ -331,7 +334,12 @@ Install-SAMTasks
 Write-SAMLog "SAM Scheduler v$SAM_VERSION setup complete."
 
 if (-not $Setup) {
-    # ถ้าไม่ได้ผ่าน -Setup flag ให้รัน Agent ทันที (Initial Deploy)
-    Write-SAMLog "Running Agent immediately (initial deploy)..."
-    Start-Process powershell.exe -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$AgentScript`" -ForceFullSync" -WindowStyle Hidden
+    # ถ้าไม่ได้ผ่าน -Setup flag = ติดตั้งใหม่ → รัน Agent ทันที, ไม่รอ Jitter
+    Write-SAMLog "Initial deploy: launching Agent -ForceFullSync immediately (no jitter)..."
+    # ใช้ -Wait เพื่อให้ Scheduler รอจนกว่า Agent จะส่งข้อมูลสำเร็จก่อนออก
+    Start-Process powershell.exe `
+        -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$AgentScript`" -ForceFullSync" `
+        -WindowStyle Hidden `
+        -Wait
+    Write-SAMLog "Initial ForceFullSync complete."
 }
