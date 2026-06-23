@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # S.A.M. AGENT  (Smart Agent Management - Data Collector & Sync Engine)
 # VERSION     : 3.0.0
 # FILE        : SAM_Agent.ps1
@@ -64,8 +64,10 @@ function Get-FieldHash {
 }
 
 # ==========================================
-# HIDE CONSOLE
+# HIDE CONSOLE — ซ่อนเสมอถ้าไม่มี console parent
 # ==========================================
+# ถ้าถูกเรียกจาก Scheduled Task (SYSTEM) ไม่มี console → set Silent อัตโนมัติ
+if (-not $Silent -and [Environment]::UserInteractive -eq $false) { $Silent = $true }
 if ($Silent) {
     try {
         Add-Type @"
@@ -78,6 +80,47 @@ if ($Silent) {
         $hwnd = [Win32]::GetConsoleWindow()
         if ($hwnd -ne [IntPtr]::Zero) { [Win32]::ShowWindow($hwnd, 0) | Out-Null }
     } catch {}
+}
+
+# ==========================================
+# C2 COMMAND PROCESSOR (function ใช้ร่วมกัน)
+# ==========================================
+function Invoke-C2Command {
+    param([string]$RowId, [string]$RemoteCmd, [string]$SafeSerial)
+
+    $Commands = $RemoteCmd -split "&&"
+    foreach ($Cmd in $Commands) {
+        $C = $Cmd.Trim()
+        switch -Regex ($C) {
+            "^SHUTDOWN$"    { Start-Process "shutdown.exe" -ArgumentList "/s /t 60 /c `"SAM Remote Command`"" -WindowStyle Hidden }
+            "^RESTART$"     { Start-Process "shutdown.exe" -ArgumentList "/r /t 60 /c `"SAM Remote Command`"" -WindowStyle Hidden }
+            "^CLEAR_TEMP$"  { Remove-Item "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue }
+            "^FORCE_SYNC$"  { Remove-Item $StateFile -Force -ErrorAction SilentlyContinue; Write-SAMLog "[C2] State cleared → FullSync next cycle" }
+            "^RUN_TASK:(.+)$" {
+                $Parts    = $Matches[1].Trim() -split '\|'
+                $TaskFile = $Parts[0].Trim()
+                $TaskArgs = if ($Parts.Count -gt 1) { ($Parts[1..($Parts.Count-1)] | ForEach-Object { "`"$_`"" }) -join " " } else { "" }
+                $TaskUrl  = "$TaskBaseUrl$TaskFile"
+                $TmpPath  = "$env:TEMP\$TaskFile"
+                try {
+                    Invoke-WebRequest -Uri $TaskUrl -OutFile $TmpPath -UseBasicParsing -ErrorAction Stop
+                    $PSA = "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& { try { & '$TmpPath' $TaskArgs } finally { Start-Sleep 2; Remove-Item '$TmpPath' -Force -ErrorAction SilentlyContinue } }`""
+                    Start-Process powershell.exe -ArgumentList $PSA -WindowStyle Hidden
+                    Write-SAMLog "[C2] Task dispatched: $TaskFile"
+                } catch { Write-SAMLog "[C2] Task failed: $TaskFile — $($_.Exception.Message)" -Level "WARN" }
+            }
+            Default { Write-SAMLog "[C2] Unknown command: $C" -Level "WARN" }
+        }
+    }
+
+    # Acknowledge → DONE
+    try {
+        $PatchUrl  = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices?id=eq.$RowId"
+        $PatchBody = @{ RemoteCommand = "DONE" } | ConvertTo-Json -Compress
+        $PatchHdr  = @{ "apikey"=$SupabaseKey; "Authorization"="Bearer $SupabaseKey"; "Content-Type"="application/json"; "User-Agent"="SAM-Agent/v$SAM_VERSION" }
+        Invoke-RestMethod -Uri $PatchUrl -Method Patch -Headers $PatchHdr -Body $PatchBody -TimeoutSec 10 | Out-Null
+        Write-SAMLog "[C2] Acknowledged (DONE): $RowId"
+    } catch { Write-SAMLog "[C2] Ack failed: $($_.Exception.Message)" -Level "WARN" }
 }
 
 # ==========================================
@@ -220,13 +263,14 @@ $Province = if ($Config.Province) { $Config.Province } else { "N/A" }
 # NETWORK CHECK (รอ Internet สูงสุด 2 ชม.)
 # ==========================================
 Write-SAMLog "=== SAM Agent v$SAM_VERSION Starting ==="
-$MaxWait = 24; $Loop = 0; $NetOK = $false
+# รอ Internet สูงสุด 5 นาที (10 ครั้ง × 30 วิ) — ป้องกันค้างนาน
+$MaxWait = 10; $Loop = 0; $NetOK = $false
 while ($Loop -lt $MaxWait -and -not $NetOK) {
     try {
         $R = Invoke-WebRequest -Uri "http://www.msftconnecttest.com/connecttest.txt" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
         if ($R.Content -match "Microsoft Connect Test") { $NetOK = $true }
         else { throw "Captive Portal" }
-    } catch { $Loop++; Start-Sleep -Seconds 300 }
+    } catch { $Loop++; if ($Loop -lt $MaxWait) { Start-Sleep -Seconds 30 } }
 }
 if (-not $NetOK) { Write-SAMLog "Network unavailable after $MaxWait retries. Exiting." -Level "WARN"; exit 0 }
 
@@ -687,44 +731,3 @@ function Build-HTMLReport {
 
 Build-HTMLReport
 Write-SAMLog "=== SAM Agent complete ==="
-
-# ==========================================
-# C2 COMMAND PROCESSOR (function ใช้ร่วมกัน)
-# ==========================================
-function Invoke-C2Command {
-    param([string]$RowId, [string]$RemoteCmd, [string]$SafeSerial)
-
-    $Commands = $RemoteCmd -split "&&"
-    foreach ($Cmd in $Commands) {
-        $C = $Cmd.Trim()
-        switch -Regex ($C) {
-            "^SHUTDOWN$"    { Start-Process "shutdown.exe" -ArgumentList "/s /t 60 /c `"SAM Remote Command`"" -WindowStyle Hidden }
-            "^RESTART$"     { Start-Process "shutdown.exe" -ArgumentList "/r /t 60 /c `"SAM Remote Command`"" -WindowStyle Hidden }
-            "^CLEAR_TEMP$"  { Remove-Item "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue }
-            "^FORCE_SYNC$"  { Remove-Item $StateFile -Force -ErrorAction SilentlyContinue; Write-SAMLog "[C2] State cleared → FullSync next cycle" }
-            "^RUN_TASK:(.+)$" {
-                $Parts    = $Matches[1].Trim() -split '\|'
-                $TaskFile = $Parts[0].Trim()
-                $TaskArgs = if ($Parts.Count -gt 1) { ($Parts[1..($Parts.Count-1)] | ForEach-Object { "`"$_`"" }) -join " " } else { "" }
-                $TaskUrl  = "$TaskBaseUrl$TaskFile"
-                $TmpPath  = "$env:TEMP\$TaskFile"
-                try {
-                    Invoke-WebRequest -Uri $TaskUrl -OutFile $TmpPath -UseBasicParsing -ErrorAction Stop
-                    $PSA = "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& { try { & '$TmpPath' $TaskArgs } finally { Start-Sleep 2; Remove-Item '$TmpPath' -Force -ErrorAction SilentlyContinue } }`""
-                    Start-Process powershell.exe -ArgumentList $PSA -WindowStyle Hidden
-                    Write-SAMLog "[C2] Task dispatched: $TaskFile"
-                } catch { Write-SAMLog "[C2] Task failed: $TaskFile — $($_.Exception.Message)" -Level "WARN" }
-            }
-            Default { Write-SAMLog "[C2] Unknown command: $C" -Level "WARN" }
-        }
-    }
-
-    # Acknowledge → DONE
-    try {
-        $PatchUrl  = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices?id=eq.$RowId"
-        $PatchBody = @{ RemoteCommand = "DONE" } | ConvertTo-Json -Compress
-        $PatchHdr  = @{ "apikey"=$SupabaseKey; "Authorization"="Bearer $SupabaseKey"; "Content-Type"="application/json"; "User-Agent"="SAM-Agent/v$SAM_VERSION" }
-        Invoke-RestMethod -Uri $PatchUrl -Method Patch -Headers $PatchHdr -Body $PatchBody -TimeoutSec 10 | Out-Null
-        Write-SAMLog "[C2] Acknowledged (DONE): $RowId"
-    } catch { Write-SAMLog "[C2] Ack failed: $($_.Exception.Message)" -Level "WARN" }
-}
