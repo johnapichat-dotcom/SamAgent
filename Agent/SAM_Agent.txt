@@ -1,0 +1,730 @@
+﻿# ==============================================================================
+# S.A.M. AGENT  (Smart Agent Management - Data Collector & Sync Engine)
+# VERSION     : 3.0.0
+# FILE        : SAM_Agent.ps1
+# ROLE        : เก็บข้อมูลระบบ → เปรียบเทียบ Delta → Sync ไป Supabase
+#               ถูกเรียกโดย SAM_Scheduler เท่านั้น (ไม่รัน Task เอง)
+# ==============================================================================
+param(
+    [switch]$Silent,          # ซ่อน console output
+    [switch]$DeltaOnly,       # ส่งเฉพาะ field ที่เปลี่ยน (default behaviour)
+    [switch]$ForceFullSync,   # บังคับ FullSync (ignore Delta)
+    [switch]$C2Only,          # ดึง C2 Command เท่านั้น ไม่เก็บข้อมูล
+    [switch]$DeepScan         # รัน Speedtest + Network Discovery
+)
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+
+# ==========================================
+# CONSTANTS
+# ==========================================
+$SAM_VERSION   = "3.0.0"
+$WorkDir       = "C:\IT_Support"
+$LogFile       = "$WorkDir\SAM_Log.txt"
+$StateFile     = "$WorkDir\LastState.json"   # { Hash, FieldHashes, LastFullSync, LastWriteTime }
+$ConfigFile    = "$WorkDir\SystemConfig.json"
+$SmartCtlPath  = "$WorkDir\smartctl.exe"
+$TaskBaseUrl   = "https://raw.githubusercontent.com/johnapichat-dotcom/sam-agent-update/main/task/"
+
+# Supabase
+$SupabaseUrl   = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices?on_conflict=SerialNumber"
+$RawKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhhYnZoZm9vc21xeXJia29obW9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3NDg2NDAsImV4cCI6MjA5MzMyNDY0MH0.12i8J50IPfEkTcq7xFJz54rA4MLARcHOsTtibi1iG2s"
+$SupabaseKey   = $RawKey -replace '\s+', ''
+
+# Full Sync interval (วัน) — ถ้าครบจะส่ง Full แม้ไม่มีการเปลี่ยนแปลง
+$FULL_SYNC_INTERVAL_DAYS = 2
+
+# ==========================================
+# UTILITY
+# ==========================================
+function Write-SAMLog {
+    param([string]$Message, [string]$Level = "INFO")
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $Line = "$Timestamp [$Level] [Agent] $Message"
+    try { Add-Content -Path $LogFile -Value $Line -Encoding UTF8 -ErrorAction SilentlyContinue } catch {}
+    if (-not $Silent) { Write-Host $Line -ForegroundColor Cyan }
+}
+
+function Write-SAMChangeLog {
+    # บันทึกเหตุการณ์เปลี่ยนแปลงลง Log แยก (เก็บไว้ถาวรกว่า 10 วัน = เก็บทุก event)
+    param([string]$FieldName, [string]$OldValue, [string]$NewValue)
+    $ChangeLogFile = "$WorkDir\SAM_ChangeLog.txt"
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $Line = "$Timestamp [CHANGE] $FieldName | OLD: $OldValue | NEW: $NewValue"
+    try { Add-Content -Path $ChangeLogFile -Value $Line -Encoding UTF8 -ErrorAction SilentlyContinue } catch {}
+    Write-SAMLog "Change detected: [$FieldName] $OldValue → $NewValue" -Level "CHANGE"
+}
+
+function Get-FieldHash {
+    param([string]$Value)
+    $MD5 = New-Object Security.Cryptography.MD5CryptoServiceProvider
+    return [BitConverter]::ToString(
+        $MD5.ComputeHash([Text.Encoding]::UTF8.GetBytes($Value))
+    ) -replace '-'
+}
+
+# ==========================================
+# HIDE CONSOLE
+# ==========================================
+if ($Silent) {
+    try {
+        Add-Type @"
+        using System; using System.Runtime.InteropServices;
+        public class Win32 {
+            [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+            [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        }
+"@ -ErrorAction SilentlyContinue
+        $hwnd = [Win32]::GetConsoleWindow()
+        if ($hwnd -ne [IntPtr]::Zero) { [Win32]::ShowWindow($hwnd, 0) | Out-Null }
+    } catch {}
+}
+
+# ==========================================
+# C2-ONLY MODE: ดึง RemoteCommand เท่านั้น (เบา ทุก 20 นาที)
+# ==========================================
+if ($C2Only) {
+    Write-SAMLog "=== C2 Poll Mode ==="
+    if (-not (Test-Path $ConfigFile)) { Write-SAMLog "No config, skip C2." -Level "WARN"; exit 0 }
+    $Config = Get-Content $ConfigFile -Raw | ConvertFrom-Json
+
+    # ดึง row ของเครื่องนี้จาก Supabase
+    try {
+        $SafeSerial = ""
+        $BIOS = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+        $RawSerial = if ($BIOS.SerialNumber) { $BIOS.SerialNumber.Trim() } else { "" }
+        if ([string]::IsNullOrWhiteSpace($RawSerial) -or $RawSerial -match "(?i)To be filled|O\.E\.M\.|Default|None") {
+            $UUID = (Get-CimInstance Win32_ComputerSystemProduct).UUID
+            $SafeSerial = "HWID-" + ($UUID.Substring(0,18))
+        } else { $SafeSerial = $RawSerial }
+
+        $PollUrl = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices?SerialNumber=eq.$([uri]::EscapeDataString($SafeSerial))&select=id,RemoteCommand"
+        $PollHeaders = @{
+            "apikey"        = $SupabaseKey
+            "Authorization" = "Bearer $SupabaseKey"
+            "User-Agent"    = "SAM-Agent/v$SAM_VERSION"
+        }
+        $PollResponse = Invoke-RestMethod -Uri $PollUrl -Method Get -Headers $PollHeaders -TimeoutSec 15 -ErrorAction Stop
+
+        if ($PollResponse -and $PollResponse.Count -gt 0) {
+            $Row = $PollResponse[0]
+            if ($Row.RemoteCommand -and $Row.RemoteCommand -notin @("","NONE","DONE")) {
+                Write-SAMLog "C2 Command received: $($Row.RemoteCommand)"
+                Invoke-C2Command -RowId $Row.id -RemoteCmd $Row.RemoteCommand -SafeSerial $SafeSerial
+            } else {
+                Write-SAMLog "C2 Poll: No pending command."
+            }
+        }
+    } catch {
+        Write-SAMLog "C2 Poll failed: $($_.Exception.Message)" -Level "WARN"
+    }
+    exit 0
+}
+
+# ==========================================
+# INITIAL SETUP GUARD: ต้องมี Config ก่อน
+# ==========================================
+if (-not (Test-Path $ConfigFile)) {
+    if ($Silent) { exit 0 }
+
+    # GUI Setup
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "S.A.M. Initial Setup [v$SAM_VERSION]"
+    $form.Size = New-Object System.Drawing.Size(420, 440)
+    $form.StartPosition = 'CenterScreen'
+    $form.BackColor = [System.Drawing.Color]::FromArgb(25, 25, 25)
+    $form.ForeColor = [System.Drawing.Color]::Cyan
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox = $false; $form.MinimizeBox = $false
+
+    $fontText = New-Object System.Drawing.Font("Segoe UI", 10)
+    $fontBold = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+
+    function Add-Label { param($Text,$X,$Y,$W=340,$H=20,$Font=$fontText)
+        $lbl = New-Object System.Windows.Forms.Label
+        $lbl.Text=$Text; $lbl.Location=New-Object System.Drawing.Point($X,$Y)
+        $lbl.Size=New-Object System.Drawing.Size($W,$H); $lbl.Font=$Font
+        $form.Controls.Add($lbl); return $lbl
+    }
+    function Add-ComboBox { param($X,$Y,$Items)
+        $cb = New-Object System.Windows.Forms.ComboBox
+        $cb.Location=New-Object System.Drawing.Point($X,$Y)
+        $cb.Size=New-Object System.Drawing.Size(340,25)
+        $cb.Font=$fontText; $cb.DropDownStyle='DropDownList'
+        $cb.BackColor=[System.Drawing.Color]::FromArgb(40,40,40)
+        $cb.ForeColor=[System.Drawing.Color]::White
+        $cb.Items.AddRange($Items); $form.Controls.Add($cb); return $cb
+    }
+
+    Add-Label "S.A.M. INITIALIZATION" 20 15 360 25 (New-Object System.Drawing.Font("Segoe UI",12,[System.Drawing.FontStyle]::Bold))
+    Add-Label "1. Branch Name / ID :" 30 60
+    $txtBranch = New-Object System.Windows.Forms.TextBox
+    $txtBranch.Location=New-Object System.Drawing.Point(30,85); $txtBranch.Size=New-Object System.Drawing.Size(340,25)
+    $txtBranch.Font=$fontText; $txtBranch.BackColor=[System.Drawing.Color]::FromArgb(40,40,40)
+    $txtBranch.ForeColor=[System.Drawing.Color]::White; $form.Controls.Add($txtBranch)
+
+    Add-Label "2. Device Type :" 30 120
+    $comboType = Add-ComboBox 30 145 @("Pos","Pos2","Pos3","Office","Office2","NB","Other","AIO","PC")
+    Add-Label "3. Business Unit :" 30 180
+    $comboBU = Add-ComboBox 30 205 @("Station","OLP","Punthai","PunthaiFC","MaxMart","ATL","Oil depot","AutoBacs","Subway","CoffeeWorld","Office","LPG plant","Other")
+    Add-Label "4. Province (จังหวัด) :" 30 240
+
+    $comboProv = New-Object System.Windows.Forms.ComboBox
+    $comboProv.Location=New-Object System.Drawing.Point(30,265); $comboProv.Size=New-Object System.Drawing.Size(340,25)
+    $comboProv.Font=$fontText; $comboProv.BackColor=[System.Drawing.Color]::FromArgb(40,40,40)
+    $comboProv.ForeColor=[System.Drawing.Color]::White
+    $comboProv.AutoCompleteMode='SuggestAppend'; $comboProv.AutoCompleteSource='ListItems'
+    $comboProv.Items.AddRange(@("กรุงเทพมหานคร","กระบี่","กาญจนบุรี","กาฬสินธุ์","กำแพงเพชร","ขอนแก่น","คลังน้ำมันลำปาง","คลังน้ำมันสุรินทร์","คลังลำลูกกา","คลังน้ำมันนครสวรรค์","คลังน้ำมันพิษณุโลก","คลังน้ำมันขอนแก่น","คลังน้ำมันแม่กลอง","คลังน้ำมันปักธงชัย","คลังศรีราชา","คลังน้ำมันชุมพร","จันทบุรี","ฉะเชิงเทรา","ชลบุรี","ชัยนาท","ชัยภูมิ","ชุมพร","เชียงราย","เชียงใหม่","ตรัง","ตราด","ตาก","นครนายก","นครปฐม","นครพนม","นครราชสีมา","นครศรีธรรมราช","นครสวรรค์","นนทบุรี","นราธิวาส","น่าน","บึงกาฬ","บุรีรัมย์","ปทุมธานี","ประจวบคีรีขันธ์","ปราจีนบุรี","ปัตตานี","พระนครศรีอยุธยา","พะเยา","พังงา","พัทลุง","พิจิตร","พิษณุโลก","เพชรบุรี","เพชรบูรณ์","แพร่","ภูเก็ต","มหาสารคาม","มุกดาหาร","แม่ฮ่องสอน","ยโสธร","ยะลา","ร้อยเอ็ด","ระนอง","ระยอง","ราชบุรี","ลพบุรี","ลำปาง","ลำพูน","เลย","ศรีสะเกษ","สกลนคร","สงขลา","สตูล","สมุทรปราการ","สมุทรสงคราม","สมุทรสาคร","สระแก้ว","สระบุรี","สิงห์บุรี","สุโขทัย","สุพรรณบุรี","สุราษฎร์ธานี","สุรินทร์","หนองคาย","หนองบัวลำภู","อ่างทอง","อำนาจเจริญ","อุดรธานี","อุตรดิตถ์","อุทัยธานี","อุบลราชธานี"))
+    $form.Controls.Add($comboProv)
+
+    $btnSave = New-Object System.Windows.Forms.Button
+    $btnSave.Text="SAVE INITIALIZE"; $btnSave.Location=New-Object System.Drawing.Point(110,310)
+    $btnSave.Size=New-Object System.Drawing.Size(180,35); $btnSave.Font=$fontBold
+    $btnSave.BackColor=[System.Drawing.Color]::FromArgb(0,120,215)
+    $btnSave.ForeColor=[System.Drawing.Color]::White; $btnSave.FlatStyle='Flat'
+    $form.Controls.Add($btnSave)
+
+    $labelDev = Add-Label "DEVELOPER: Aphichat IT Support" 10 360 380 15 (New-Object System.Drawing.Font("Segoe UI",7))
+    $labelDev.ForeColor=[System.Drawing.Color]::DimGray; $labelDev.TextAlign='BottomRight'
+
+    $script:SavedOK = $false
+    $btnSave.Add_Click({
+        if ([string]::IsNullOrWhiteSpace($txtBranch.Text) -or [string]::IsNullOrWhiteSpace($comboType.Text) -or
+            [string]::IsNullOrWhiteSpace($comboBU.Text)   -or [string]::IsNullOrWhiteSpace($comboProv.Text)) {
+            [System.Windows.Forms.MessageBox]::Show("Please complete all fields.","Warning",'OK','Warning')
+            return
+        }
+        $cfg = @{
+            BU       = $comboBU.Text
+            BranchID = "$($txtBranch.Text.Trim())-$($comboType.Text)"
+            Province = $comboProv.Text
+        }
+        try { $cfg | ConvertTo-Json | Out-File $ConfigFile -Encoding UTF8 } catch {}
+        $script:SavedOK = $true
+        $form.Close()
+    })
+    $form.TopMost = $true
+    $form.ShowDialog() | Out-Null
+    if (-not $script:SavedOK) { exit 0 }
+}
+
+$Config   = Get-Content $ConfigFile -Raw | ConvertFrom-Json
+$BU       = $Config.BU
+$BranchID = $Config.BranchID
+$Province = if ($Config.Province) { $Config.Province } else { "N/A" }
+
+# ==========================================
+# NETWORK CHECK (รอ Internet สูงสุด 2 ชม.)
+# ==========================================
+Write-SAMLog "=== SAM Agent v$SAM_VERSION Starting ==="
+$MaxWait = 24; $Loop = 0; $NetOK = $false
+while ($Loop -lt $MaxWait -and -not $NetOK) {
+    try {
+        $R = Invoke-WebRequest -Uri "http://www.msftconnecttest.com/connecttest.txt" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        if ($R.Content -match "Microsoft Connect Test") { $NetOK = $true }
+        else { throw "Captive Portal" }
+    } catch { $Loop++; Start-Sleep -Seconds 300 }
+}
+if (-not $NetOK) { Write-SAMLog "Network unavailable after $MaxWait retries. Exiting." -Level "WARN"; exit 0 }
+
+# ==========================================
+# JITTER DELAY (ป้องกัน thundering herd)
+# ==========================================
+if ($Silent -and -not $ForceFullSync) {
+    $Jitter = Get-Random -Minimum 10 -Maximum 180
+    Write-SAMLog "Jitter delay: $Jitter sec"
+    Start-Sleep -Seconds $Jitter
+}
+
+# ==========================================
+# COLLECT SYSTEM DATA
+# ==========================================
+Write-SAMLog "Collecting system data..."
+
+# Hardware Identity
+$BIOS     = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+$CompSys  = Get-CimInstance Win32_ComputerSystem
+$RawSN    = if ($BIOS.SerialNumber) { $BIOS.SerialNumber.Trim() } else { "" }
+if ([string]::IsNullOrWhiteSpace($RawSN) -or $RawSN -match "(?i)To be filled|O\.E\.M\.|Default|None") {
+    $UUID = (Get-CimInstance Win32_ComputerSystemProduct).UUID
+    $SafeSerial = "HWID-" + ($UUID.Substring(0,18))
+} else { $SafeSerial = $RawSN }
+
+# OS
+$OS      = Get-CimInstance Win32_OperatingSystem
+$RegOS   = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+$DispVer = if ($RegOS.DisplayVersion) { $RegOS.DisplayVersion } else { $RegOS.ReleaseId }
+$ExactOS = "Version $DispVer (OS Build $($RegOS.CurrentBuild).$($RegOS.UBR))"
+$CombOS  = "$($OS.Caption) ($ExactOS)"
+
+# CPU
+$CPU = Get-CimInstance Win32_Processor
+
+# RAM
+$MemArray  = Get-CimInstance Win32_PhysicalMemoryArray -ErrorAction SilentlyContinue
+$TotalSlots = if ($MemArray -and $MemArray.MemoryDevices) { $MemArray.MemoryDevices } else { 0 }
+$PhyRAM    = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction SilentlyContinue)
+$RamCount  = if ($PhyRAM[0]) { $PhyRAM.Count } else { 0 }
+if ($TotalSlots -lt $RamCount) { $TotalSlots = $RamCount }
+$RamList   = @(); $TotalRAM = 0
+foreach ($S in $PhyRAM) {
+    $GB = [math]::Round($S.Capacity/1GB)
+    $TotalRAM += $GB
+    $SMT = $S.SMBIOSMemoryType
+    $DDR = if($SMT-eq 34){"DDR5"} elseif($SMT-eq 26){"DDR4"} elseif($SMT-eq 24){"DDR3"} elseif($SMT-eq 21){"DDR2"} else{"Unknown"}
+    $RamList += "[$($S.DeviceLocator)] $($GB)GB $DDR ($($S.Speed) MHz)"
+}
+for ($i=1; $i -le ($TotalSlots - $RamCount); $i++) { $RamList += "[Empty Slot] N/A" }
+$RAMStr = $RamList -join " | "
+
+# Computer Description
+$CompDesc = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\lanmanserver\parameters" -Name srvcomment -ErrorAction SilentlyContinue).srvcomment
+
+# Remote Management
+$TV_ID = "Not Installed"; $TV_Ver = ""
+foreach ($P in @("HKLM:\SOFTWARE\TeamViewer","HKLM:\SOFTWARE\WOW6432Node\TeamViewer","HKCU:\SOFTWARE\TeamViewer")) {
+    if (Test-Path $P) {
+        $R = Get-ItemProperty $P -ErrorAction SilentlyContinue
+        if ($R.ClientID) { $TV_ID = $R.ClientID; $TV_Ver = if($R.Version){$R.Version}else{""}; break }
+    }
+}
+$AD_Conf = "$env:ProgramData\AnyDesk\system.conf"
+$AD_ID   = "Not Installed"
+if (Test-Path $AD_Conf) {
+    $ADL = Get-Content $AD_Conf | Where-Object { $_ -match "ad.anynet.id=" }
+    if ($ADL) { $AD_ID = $ADL.Split('=')[1] }
+}
+
+# Windows Update SLA
+try {
+    $WU = New-Object -ComObject "Microsoft.Update.AutoUpdate"
+    $LastInst = $WU.Results.LastInstallationSuccessDate
+    if ($LastInst -and $LastInst.Year -gt 1601) {
+        $DaysSince = ((Get-Date) - $LastInst).Days
+        $WUStatus = if($DaysSince -le 30){"✅ Healthy"} elseif($DaysSince -le 90){"⚠️ Warning"} else{"❌ Critical"}
+        $CloudWU = "$DaysSince Days ($WUStatus)"
+    } else {
+        $LP = Get-HotFix -ErrorAction SilentlyContinue | Sort-Object InstalledOn -Descending | Select-Object -First 1
+        if ($LP) {
+            $DaysSince = ((Get-Date) - [datetime]$LP.InstalledOn).Days
+            $WUStatus = if($DaysSince -le 30){"✅ Healthy"} elseif($DaysSince -le 90){"⚠️ Warning"} else{"❌ Critical"}
+            $CloudWU = "$DaysSince Days ($WUStatus) [Fallback]"
+        } else { $CloudWU = "No Data" }
+    }
+} catch { $CloudWU = "Scan Error" }
+
+# Firewall
+try {
+    $ActNets = Get-NetConnectionProfile -ErrorAction SilentlyContinue
+    if ($ActNets) {
+        $FwSts = @(); $Secure = $true
+        foreach ($Cat in ($ActNets.NetworkCategory | Select-Object -Unique)) {
+            $Prof = if($Cat -match "Domain"){"Domain"} elseif($Cat -match "Private"){"Private"} else{"Public"}
+            $FwP  = Get-NetFirewallProfile -Name $Prof -ErrorAction SilentlyContinue
+            if ($FwP.Enabled) { $FwSts += "$Prof (ON)" } else { $FwSts += "$Prof (OFF)"; $Secure = $false }
+        }
+        $CloudFW = "$(if($Secure){"✅"}else{"❌"}) $($FwSts -join ', ')"
+    } else { $CloudFW = "Offline" }
+} catch { $CloudFW = "Scan Error" }
+
+# Boot Performance
+try {
+    $StartupItems = @(Get-CimInstance Win32_StartupCommand -ErrorAction SilentlyContinue)
+    $AppCount = $StartupItems.Count
+    $BootTimeSec = "N/A"
+    try {
+        $BE = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Diagnostics-Performance/Operational';ID=100} -MaxEvents 1 -ErrorAction Stop
+        $BMS = ([xml]$BE.ToXml()).Event.EventData.Data | Where-Object { $_.Name -eq 'BootTime' } | Select-Object -ExpandProperty '#text'
+        if ($BMS) { $BootTimeSec = [math]::Round([int]$BMS/1000,1) }
+    } catch {}
+    $BootIcon = if($BootTimeSec -ne "N/A" -and [double]$BootTimeSec -lt 45){"✅"} elseif($BootTimeSec -ne "N/A" -and [double]$BootTimeSec -le 90){"⚠️"} else{"⚠️"}
+    $AppIcon  = if($AppCount -gt 15){"❌"} elseif($AppCount -gt 8){"⚠️"} else{"✅"}
+    $CloudBoot = "Boot: $BootIcon $BootTimeSec sec | Apps: $AppIcon $AppCount"
+} catch { $CloudBoot = "Scan Error" }
+
+# BitLocker
+$BLList = @()
+try {
+    $Vols = Get-CimInstance -Namespace "root\CIMv2\Security\MicrosoftVolumeEncryption" -ClassName Win32_EncryptableVolume -ErrorAction Stop
+    foreach ($V in $Vols) {
+        $Ltr = if($V.DriveLetter){$V.DriveLetter}else{"?"}
+        $St  = if($V.ProtectionStatus -eq 1){"🔒 Protected"}else{"🔓 Unprotected"}
+        $BLList += "[$Ltr] $St"
+    }
+} catch { $BLList += "Not Supported" }
+$CloudBL = $BLList -join " | "
+
+# Antivirus
+$AVList = @()
+try {
+    $AVs = Get-CimInstance -Namespace "root\SecurityCenter2" -ClassName AntivirusProduct -ErrorAction Stop
+    foreach ($AV in $AVs) {
+        $AVN = $AV.displayName
+        $AVV = if($AVN -match "Defender"){(Get-MpComputerStatus -ErrorAction SilentlyContinue).AMProductVersion}else{"Unknown"}
+        $AVList += "$AVN (v.$AVV)"
+    }
+} catch { $AVList += "WMI Error" }
+$CloudAV1 = if($AVList.Count -ge 1){$AVList[0]}else{"Not Detected"}
+$CloudAV2 = if($AVList.Count -ge 2){$AVList[1..($AVList.Count-1)] -join " | "}else{"-"}
+
+# Software Inventory
+$SwPaths = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*","HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*","HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*")
+$NoiseRx = "(?i)(Additional Runtime|Minimum Runtime|Core Interpreter|pip Bootstrap|Standard Library|Tcl/Tk Support|Test Suite|Development Libraries|Documentation|Executables|Add to Path|Update Helper|Prerequisites|Android Auto|Android Switch|Google Partner Setup|Google Play services|Play Store|^Google$)"
+$AllSW   = Get-ItemProperty $SwPaths -ErrorAction SilentlyContinue |
+    Where-Object { $_.DisplayName -ne $null -and $_.SystemComponent -ne 1 -and $_.ParentKeyName -eq $null -and $_.DisplayName -notmatch "KB\d{6,}" -and $_.DisplayName -notmatch $NoiseRx } |
+    Sort-Object DisplayName -Unique
+$CloudSW = ($AllSW | ForEach-Object { $_.DisplayName }) -join " | "
+
+# Users
+$AdminGrp = (Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue).Name
+$CloudUsers = (Get-LocalUser | Where-Object Enabled | ForEach-Object {
+    $Role = if ($AdminGrp -match $_.Name) { "Admin" } else { "User" }
+    "$($_.Name)($Role)"
+}) -join " | "
+
+# Printers
+$PrinterList = @()
+Get-Printer | ForEach-Object {
+    $PIP = ""
+    try {
+        $PP = Get-PrinterPort -Name $_.PortName -ErrorAction Stop
+        if ($PP -and $PP.PrinterHostAddress) { $PIP = " (IP:$($PP.PrinterHostAddress))" }
+    } catch {}
+    $PrinterList += "$($_.Name)$PIP"
+}
+$CloudPrinters = $PrinterList -join " | "
+
+# Disk S.M.A.R.T
+$DiskList = @()
+if (Test-Path $SmartCtlPath) {
+    try {
+        $ScanJ = & $SmartCtlPath --scan -j 2>$null | ConvertFrom-Json
+        $Seen  = @()
+        foreach ($Dev in $ScanJ.devices) {
+            $DJ = & $SmartCtlPath -a $Dev.name -j 2>$null | ConvertFrom-Json
+            if (-not $DJ -or -not $DJ.model_name) { continue }
+            if ($Seen -contains $DJ.serial_number) { continue }
+            $Seen += $DJ.serial_number
+            $Type    = if($DJ.device.protocol -match "NVMe" -or $DJ.rotation_rate -eq 0){"SSD"}else{"HDD"}
+            $Status  = if($DJ.smart_status.passed){"Healthy"}else{"Critical"}
+            $Temp    = if($DJ.temperature.current){"$($DJ.temperature.current)°C"}else{"N/A"}
+            $Hours   = if($DJ.power_on_time.hours){"$($DJ.power_on_time.hours) hrs"}else{"N/A"}
+            $Health  = "N/A"
+            if ($Type -eq "SSD") {
+                $HP = $null
+                if ($null -ne $DJ.nvme_smart_health_information_log.percentage_used) { $HP = 100 - $DJ.nvme_smart_health_information_log.percentage_used }
+                elseif ($DJ.ata_smart_attributes.table) {
+                    $A = $DJ.ata_smart_attributes.table | Where-Object { $_.id -in @(177,202,230,231,233) } | Select-Object -First 1
+                    if ($A) { $HP = if($DJ.model_name -match "WDC|WD " -and $A.id -eq 230){100-$A.value}else{$A.value} }
+                }
+                if ($null -ne $HP) { $Health = if($HP -ge 30){"✅ Good($HP%)"}elseif($HP -gt 10){"⚠️ Warn($HP%)"}else{"❌ Bad($HP%)"} }
+            }
+            $DiskList += "Model:$($DJ.model_name) | Type:$Type | Status:$Status | Temp:$Temp | Health:$Health | Hrs:$Hours"
+        }
+    } catch { Write-SAMLog "S.M.A.R.T scan error: $($_.Exception.Message)" -Level "WARN" }
+}
+if ($DiskList.Count -eq 0) {
+    try {
+        Get-PhysicalDisk -ErrorAction Stop | ForEach-Object {
+            $R = Get-StorageReliabilityCounter -PhysicalDisk $_ -ErrorAction SilentlyContinue
+            $DiskList += "Model:$($_.Model) | Type:$($_.MediaType) | Status:$($_.HealthStatus) | Wear:$(if($R){$R.Wear}else{'N/A'})%"
+        }
+    } catch { $DiskList += "Unavailable" }
+}
+$CloudDisk = $DiskList -join "`n"
+
+# Drive Space
+$DriveSpaceList = @()
+try {
+    Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+        $TB = [math]::Round($_.Size/1GB,1)
+        $FB = [math]::Round($_.FreeSpace/1GB,1)
+        $FP = if($TB -gt 0){[math]::Round(($FB/$TB)*100,1)}else{0}
+        $Ico = if($FP -le 10){"❌"}elseif($FP -le 20){"⚠️"}else{"✅"}
+        $DriveSpaceList += "$Ico [$($_.DeviceID)] $FP% ($FB/$TB GB)"
+    }
+} catch {}
+$CloudDriveSpace = $DriveSpaceList -join " | "
+
+# Network
+$CloudNet = "N/A"; $MAC = "N/A"
+try {
+    $Net = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPAddress -and $_.DefaultIPGateway } | Select-Object -First 1
+    if ($Net) {
+        $IP = $Net.IPAddress[0]; $MAC = $Net.MACAddress
+        $DNS = if($Net.DNSServerSearchOrder){$Net.DNSServerSearchOrder -join ", "}else{"N/A"}
+        $CloudNet = "$IP (SN:$($Net.IPSubnet[0]) | GW:$($Net.DefaultIPGateway[0]) | DNS:$DNS)"
+    }
+} catch {}
+
+# Stability
+$Stability    = (Get-CimInstance Win32_ReliabilityStabilityMetrics -ErrorAction SilentlyContinue | Sort-Object timegenerated -Descending | Select-Object -First 1).SystemStabilityIndex
+$HealthScore  = if($null -ne $Stability){"$([math]::Round($Stability,1))/10"}else{"N/A"}
+$BootTime     = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+$UptimeDays   = ((Get-Date) - $BootTime).Days
+$UptimeStr    = if($UptimeDays -ge 14){"$UptimeDays วัน (⚠️ ควร Restart)"}else{"$UptimeDays วัน"}
+$P1 = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending"
+$P2 = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
+$P3 = $null -ne (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name PendingFileRenameOperations -ErrorAction SilentlyContinue)
+$PendingRb    = if($P1 -or $P2 -or $P3){"⚠️ Requires Restart"}else{"✅ Clear"}
+
+# ==========================================
+# BUILD DATA OBJECT
+# ==========================================
+$NowUTC  = (Get-Date).ToUniversalTime()
+$NowTH   = $NowUTC.AddHours(7)
+
+$CurrentData = [ordered]@{
+    BU             = $BU
+    BranchID       = $BranchID
+    Province       = $Province
+    ComputerName   = $env:COMPUTERNAME
+    ComputerDesc   = $CompDesc
+    Manufacturer   = $CompSys.Manufacturer
+    Model          = $CompSys.Model
+    SerialNumber   = $SafeSerial
+    OSVersion      = $CombOS
+    WinUpdate      = $CloudWU
+    BootPerf       = $CloudBoot
+    CPU            = "$($CPU.Name) ($($CPU.NumberOfCores)C/$($CPU.NumberOfLogicalProcessors)T)"
+    RAM            = "$TotalRAM GB ($RAMStr)"
+    IPAddress      = $CloudNet
+    MACAddress     = $MAC
+    Antivirus1     = $CloudAV1
+    Antivirus2     = $CloudAV2
+    Firewall       = $CloudFW
+    DiskHealth     = $CloudDisk
+    DriveSpace     = $CloudDriveSpace
+    BitLocker      = $CloudBL
+    StabilityScore = $HealthScore
+    Uptime         = $UptimeStr
+    PendingReboot  = $PendingRb
+    TeamViewerID   = "$TV_ID$(if($TV_Ver){" (v$TV_Ver)"}else{""})"
+    AnyDeskID      = $AD_ID
+    ActiveUsers    = $CloudUsers
+    AllPrinters    = $CloudPrinters
+    AllSoftware    = $CloudSW
+    AgentVersion   = "v$SAM_VERSION"
+    updated_at     = $NowUTC.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+    LastSyncTH     = $NowTH.ToString("yyyy-MM-dd HH:mm:ss")
+}
+
+# ==========================================
+# SMART DELTA SYNC ENGINE
+# ==========================================
+Write-SAMLog "Analyzing changes (Delta Engine)..."
+
+# โหลด State เดิม
+$LastState     = $null
+$LastFieldHash = @{}
+$LastFullSync  = $null
+
+if (Test-Path $StateFile) {
+    try {
+        $LastState    = Get-Content $StateFile -Raw | ConvertFrom-Json
+        $LastFullSync = if ($LastState.LastFullSync) { [datetime]$LastState.LastFullSync } else { $null }
+        # ดึง field hashes เดิม (ถ้ามี)
+        if ($LastState.FieldHashes) {
+            $LastState.FieldHashes.PSObject.Properties | ForEach-Object {
+                $LastFieldHash[$_.Name] = $_.Value
+            }
+        }
+    } catch { Write-SAMLog "State file corrupt, will force FullSync." -Level "WARN" }
+}
+
+# ตรวจสอบว่าถึงเวลา Force FullSync หรือยัง
+$DaysSinceFullSync = if ($LastFullSync) { ((Get-Date) - $LastFullSync).TotalDays } else { 999 }
+$NeedFullSync      = $ForceFullSync -or ($DaysSinceFullSync -ge $FULL_SYNC_INTERVAL_DAYS) -or ($null -eq $LastState)
+
+# Hash แต่ละ field เพื่อหาที่เปลี่ยนแปลง
+$CurrentFieldHash = @{}
+$ChangedFields    = @()
+$DeltaPayload     = [ordered]@{
+    SerialNumber = $SafeSerial
+    ComputerName = $env:COMPUTERNAME
+    updated_at   = $CurrentData.updated_at
+    LastSyncTH   = $CurrentData.LastSyncTH
+}
+
+foreach ($Key in $CurrentData.Keys) {
+    $Val  = if ($null -ne $CurrentData[$Key]) { $CurrentData[$Key].ToString() } else { "" }
+    $Hash = Get-FieldHash $Val
+    $CurrentFieldHash[$Key] = $Hash
+
+    if (-not $NeedFullSync) {
+        $OldHash = $LastFieldHash[$Key]
+        if ($OldHash -ne $Hash) {
+            $ChangedFields += $Key
+            $DeltaPayload[$Key] = $CurrentData[$Key]
+            # บันทึก Change Log
+            $OldVal = if ($LastState -and $LastState.FieldHashes -and $LastState.FieldData -and $LastState.FieldData.$Key) { $LastState.FieldData.$Key } else { "(unknown)" }
+            Write-SAMChangeLog -FieldName $Key -OldValue $OldVal -NewValue $Val
+        }
+    }
+}
+
+# กำหนดประเภทการส่ง
+if ($NeedFullSync) {
+    $SyncType    = "FullSync"
+    $PayloadData = $CurrentData
+    $PayloadData["Type"] = "FullSync"
+    Write-SAMLog "Sync type: FullSync (DaysSinceFull=$([math]::Round($DaysSinceFullSync,1)), Forced=$ForceFullSync)"
+} elseif ($ChangedFields.Count -gt 0) {
+    $SyncType    = "DeltaSync"
+    $DeltaPayload["Type"] = "DeltaSync"
+    $DeltaPayload["ChangedFields"] = ($ChangedFields -join ",")
+    $PayloadData = $DeltaPayload
+    Write-SAMLog "Sync type: DeltaSync — $($ChangedFields.Count) field(s) changed: $($ChangedFields -join ', ')"
+} else {
+    # ไม่มีอะไรเปลี่ยน → ส่ง Heartbeat เบาๆ
+    $SyncType = "Heartbeat"
+    $DeltaPayload["Type"] = "Heartbeat"
+    $PayloadData = $DeltaPayload
+    Write-SAMLog "Sync type: Heartbeat (no changes detected)"
+}
+
+# ==========================================
+# SUPABASE TRANSMISSION
+# ==========================================
+$Headers = @{
+    "apikey"        = $SupabaseKey
+    "Authorization" = "Bearer $SupabaseKey"
+    "Content-Type"  = "application/json; charset=utf-8"
+    "Prefer"        = "resolution=merge-duplicates, return=representation"
+    "User-Agent"    = "SAM-Agent/v$SAM_VERSION"
+}
+
+$JsonPayload = ($PayloadData | ConvertTo-Json -Depth 5 -Compress) -replace '\\u0000', ''
+$Utf8Bytes   = [System.Text.Encoding]::UTF8.GetBytes($JsonPayload)
+$MaxRetries  = 6; $Attempt = 0; $IsSuccess = $false
+
+while ($Attempt -lt $MaxRetries -and -not $IsSuccess) {
+    $Attempt++
+    try {
+        $Timer = [System.Diagnostics.Stopwatch]::StartNew()
+        $Response = Invoke-RestMethod -Uri $SupabaseUrl -Method Post -Headers $Headers -Body $Utf8Bytes -TimeoutSec 30 -ErrorAction Stop
+        $Timer.Stop()
+        $IsSuccess = $true
+
+        $ElapsedS = [math]::Round($Timer.Elapsed.TotalSeconds, 2)
+        $SizeKB   = [math]::Round($Utf8Bytes.Length / 1KB, 2)
+        Write-SAMLog "Supabase sync OK. Type:$SyncType | Attempt:$Attempt | $SizeKB KB | $ElapsedS s"
+
+        # อัปเดต State File
+        $NewState = @{
+            Hash         = (Get-FieldHash $JsonPayload)
+            LastFullSync = if ($SyncType -eq "FullSync") { (Get-Date).ToString("o") } else { if ($LastFullSync) { $LastFullSync.ToString("o") } else { "" } }
+            LastWriteTime = (Get-Date).ToString("o")
+            FieldHashes  = $CurrentFieldHash
+            # เก็บค่าปัจจุบันไว้เปรียบเทียบรอบหน้า (เฉพาะ field สำคัญ ไม่เก็บ SW list ยาว)
+            FieldData    = @{
+                OSVersion = $CurrentData.OSVersion; RAM = $CurrentData.RAM; IPAddress = $CurrentData.IPAddress
+                DriveSpace = $CurrentData.DriveSpace; DiskHealth = $CurrentData.DiskHealth
+                Antivirus1 = $CurrentData.Antivirus1; WinUpdate = $CurrentData.WinUpdate
+            }
+        }
+        try { $NewState | ConvertTo-Json -Depth 5 | Out-File $StateFile -Encoding UTF8 } catch {}
+
+        # C2 Command Processing
+        $RemoteCmd = if ($Response -is [array]) { $Response[0].RemoteCommand } else { $Response.RemoteCommand }
+        $RowId     = if ($Response -is [array]) { $Response[0].id } else { $Response.id }
+        if ($RemoteCmd -and $RemoteCmd -notin @("","NONE","DONE")) {
+            Write-SAMLog "C2 Command: $RemoteCmd"
+            Invoke-C2Command -RowId $RowId -RemoteCmd $RemoteCmd -SafeSerial $SafeSerial
+        }
+
+    } catch {
+        if ($null -ne $Timer) { $Timer.Stop() }
+        $ErrMsg = if ($_.ErrorDetails) { $_.ErrorDetails.Message } else { $_.Exception.Message }
+        $RetryWait = Get-Random -Minimum 60 -Maximum 300
+        Write-SAMLog "Sync failed (Attempt $Attempt/$MaxRetries): $ErrMsg. Retry in $RetryWait s." -Level "WARN"
+        if ($Attempt -lt $MaxRetries) { Start-Sleep -Seconds $RetryWait }
+    }
+}
+
+if (-not $IsSuccess) {
+    Write-SAMLog "All $MaxRetries sync attempts failed." -Level "ERROR"
+}
+
+# ==========================================
+# HTML REPORT
+# ==========================================
+function Build-HTMLReport {
+    $CleanBranch = $BranchID -replace '[\\/:*?"<>|]', '-'
+    $ReportPath  = "$WorkDir\$($BU)_$($CleanBranch)_$($env:COMPUTERNAME)_$(Get-Date -Format 'yyyy-MM-dd').html"
+
+    # ลบ report เก่าของเครื่องนี้
+    Get-ChildItem $WorkDir -Filter "$($BU)_$($CleanBranch)_$($env:COMPUTERNAME)*.html" |
+        Where-Object { $_.FullName -ne $ReportPath } | Remove-Item -Force -ErrorAction SilentlyContinue
+
+    $CSS = "<style>body{font-family:'Leelawadee UI',Tahoma,sans-serif;margin:20px}table{border-collapse:collapse;width:95%;margin:auto auto 25px;box-shadow:0 2px 3px rgba(0,0,0,.1)}th,td{border:1px solid #ddd;text-align:left;padding:8px}th{background-color:#f2f2f2}tr:nth-child(even){background-color:#f9f9f9}h1,h2{text-align:center;color:#333}h1{border-bottom:2px solid #eee;padding-bottom:10px}.delta{color:#0056b3;font-weight:bold}</style>"
+    $H  = "<!DOCTYPE html><html><head><meta charset='UTF-8'>$CSS</head><body>"
+    $H += "<h1>System Audit — $env:COMPUTERNAME<br><span style='font-size:0.6em;color:#666;'>BU:$BU | Branch:$BranchID | Prov:$Province | Agent:v$SAM_VERSION | Sync:$SyncType</span></h1>"
+
+    $H += "<h2>System Information</h2><table>"
+    foreach ($K in $CurrentData.Keys | Where-Object { $_ -notin @("updated_at","LastSyncTH","Type","ChangedFields","AllSoftware") }) {
+        $MarkClass = if ($ChangedFields -contains $K) { " class='delta'" } else { "" }
+        $H += "<tr><td$MarkClass>$K</td><td$MarkClass>$($CurrentData[$K])</td></tr>"
+    }
+    $H += "</table>"
+
+    if ($AllSW.Count -gt 0) {
+        $H += "<h2>Installed Applications</h2><table><tr><th>Name</th><th>Version</th><th>Install Date</th></tr>"
+        foreach ($App in $AllSW) {
+            $H += "<tr><td>$($App.DisplayName)</td><td>$($App.DisplayVersion)</td><td>$($App.InstallDate)</td></tr>"
+        }
+        $H += "</table>"
+    }
+
+    $H += "</body></html>"
+    try { [System.IO.File]::WriteAllText($ReportPath, $H, [System.Text.Encoding]::UTF8) } catch {}
+    if (-not $Silent) { try { Invoke-Item $ReportPath } catch {} }
+    Write-SAMLog "HTML report saved: $ReportPath"
+}
+
+Build-HTMLReport
+Write-SAMLog "=== SAM Agent complete ==="
+
+# ==========================================
+# C2 COMMAND PROCESSOR (function ใช้ร่วมกัน)
+# ==========================================
+function Invoke-C2Command {
+    param([string]$RowId, [string]$RemoteCmd, [string]$SafeSerial)
+
+    $Commands = $RemoteCmd -split "&&"
+    foreach ($Cmd in $Commands) {
+        $C = $Cmd.Trim()
+        switch -Regex ($C) {
+            "^SHUTDOWN$"    { Start-Process "shutdown.exe" -ArgumentList "/s /t 60 /c `"SAM Remote Command`"" -WindowStyle Hidden }
+            "^RESTART$"     { Start-Process "shutdown.exe" -ArgumentList "/r /t 60 /c `"SAM Remote Command`"" -WindowStyle Hidden }
+            "^CLEAR_TEMP$"  { Remove-Item "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue }
+            "^FORCE_SYNC$"  { Remove-Item $StateFile -Force -ErrorAction SilentlyContinue; Write-SAMLog "[C2] State cleared → FullSync next cycle" }
+            "^RUN_TASK:(.+)$" {
+                $Parts    = $Matches[1].Trim() -split '\|'
+                $TaskFile = $Parts[0].Trim()
+                $TaskArgs = if ($Parts.Count -gt 1) { ($Parts[1..($Parts.Count-1)] | ForEach-Object { "`"$_`"" }) -join " " } else { "" }
+                $TaskUrl  = "$TaskBaseUrl$TaskFile"
+                $TmpPath  = "$env:TEMP\$TaskFile"
+                try {
+                    Invoke-WebRequest -Uri $TaskUrl -OutFile $TmpPath -UseBasicParsing -ErrorAction Stop
+                    $PSA = "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& { try { & '$TmpPath' $TaskArgs } finally { Start-Sleep 2; Remove-Item '$TmpPath' -Force -ErrorAction SilentlyContinue } }`""
+                    Start-Process powershell.exe -ArgumentList $PSA -WindowStyle Hidden
+                    Write-SAMLog "[C2] Task dispatched: $TaskFile"
+                } catch { Write-SAMLog "[C2] Task failed: $TaskFile — $($_.Exception.Message)" -Level "WARN" }
+            }
+            Default { Write-SAMLog "[C2] Unknown command: $C" -Level "WARN" }
+        }
+    }
+
+    # Acknowledge → DONE
+    try {
+        $PatchUrl  = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices?id=eq.$RowId"
+        $PatchBody = @{ RemoteCommand = "DONE" } | ConvertTo-Json -Compress
+        $PatchHdr  = @{ "apikey"=$SupabaseKey; "Authorization"="Bearer $SupabaseKey"; "Content-Type"="application/json"; "User-Agent"="SAM-Agent/v$SAM_VERSION" }
+        Invoke-RestMethod -Uri $PatchUrl -Method Patch -Headers $PatchHdr -Body $PatchBody -TimeoutSec 10 | Out-Null
+        Write-SAMLog "[C2] Acknowledged (DONE): $RowId"
+    } catch { Write-SAMLog "[C2] Ack failed: $($_.Exception.Message)" -Level "WARN" }
+}

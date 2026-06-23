@@ -1,0 +1,337 @@
+﻿# ==============================================================================
+# S.A.M. SCHEDULER  (Smart Agent Management - Orchestrator)
+# VERSION     : 3.0.0
+# FILE        : SAM_Scheduler.ps1
+# ROLE        : Master Orchestrator — ควบคุม Timing, Trigger, และ Task Queue
+#               ไม่เก็บข้อมูลระบบเอง, ไม่ sync เอง → เรียก Agent / Update แทน
+# ==============================================================================
+param(
+    [switch]$Setup,          # ติดตั้ง Scheduled Tasks ทั้งหมด
+    [switch]$Uninstall,      # ถอน Tasks + ลบโฟลเดอร์
+    [switch]$Status          # แสดง Status ของ Tasks ทั้งหมด
+)
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+
+# ==========================================
+# CONSTANTS — แก้ตรงนี้จุดเดียว
+# ==========================================
+$SAM_VERSION     = "3.0.0"
+$WorkDir         = "C:\IT_Support"
+$LogFile         = "$WorkDir\SAM_Log.txt"
+$StateFile       = "$WorkDir\LastState.json"
+$ConfigFile      = "$WorkDir\SystemConfig.json"
+
+# Script paths
+$AgentScript     = "$WorkDir\SAM_Agent.ps1"
+$UpdateScript    = "$WorkDir\SAM_Update.ps1"
+$SchedulerScript = "$WorkDir\SAM_Scheduler.ps1"
+
+# Task Names
+$TASK_AGENT_SYNC    = "SAM_Agent_Sync"       # Full collect + sync (ทุก 2 ชม.)
+$TASK_C2_POLL       = "SAM_C2_Poll"          # C2 command polling (ทุก 20 นาที)
+$TASK_FULL_SYNC     = "SAM_FullSync_Daily"   # Force FullSync ทุก 2 วัน
+$TASK_UPDATE_CHECK  = "SAM_Update_Check"     # อัปเดต + self-heal (ทุกวัน 07:00)
+$TASK_LOG_ROTATE    = "SAM_LogRotate"        # ตัด Log เก่า (ทุกวัน 00:05)
+
+# ==========================================
+# UTILITY: Write-SAMLog
+# ==========================================
+function Write-SAMLog {
+    param([string]$Message, [string]$Level = "INFO")
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $Line = "$Timestamp [$Level] [Scheduler] $Message"
+    try {
+        Add-Content -Path $LogFile -Value $Line -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {}
+    if (-not $env:SAM_SILENT) { Write-Host $Line -ForegroundColor Cyan }
+}
+
+# ==========================================
+# FOLDER BOOTSTRAP
+# ==========================================
+function Invoke-FolderBootstrap {
+    Write-SAMLog "Bootstrapping working directory: $WorkDir"
+
+    cmd.exe /c "takeown /f `"$WorkDir`" /r /d y >nul 2>&1"
+    cmd.exe /c "icacls `"$WorkDir`" /reset /T /C /Q >nul 2>&1"
+    cmd.exe /c "attrib -h -s -r `"$WorkDir`" /s /d >nul 2>&1"
+
+    if (-not (Test-Path $WorkDir)) {
+        New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
+    }
+
+    # ACL: Admins+SYSTEM full, Users read-execute
+    cmd.exe /c "icacls `"$WorkDir`" /inheritance:r /quiet >nul 2>&1"
+    cmd.exe /c "icacls `"$WorkDir`" /grant Administrators:(OI)(CI)F /T /quiet >nul 2>&1"
+    cmd.exe /c "icacls `"$WorkDir`" /grant SYSTEM:(OI)(CI)F /T /quiet >nul 2>&1"
+    cmd.exe /c "icacls `"$WorkDir`" /grant Users:(OI)(CI)RX /T /quiet >nul 2>&1"
+
+    # ซ่อนโฟลเดอร์
+    try { (Get-Item $WorkDir -Force).Attributes = 'Hidden, System' } catch {}
+
+    Write-SAMLog "Folder bootstrap complete."
+}
+
+# ==========================================
+# HELPER: Register-SAMTask
+# ==========================================
+function Register-SAMTask {
+    param(
+        [string]$TaskName,
+        [string]$ScriptFile,
+        [string]$ExtraArgs = "",
+        [object[]]$Triggers,
+        [string]$Description = ""
+    )
+
+    $RunUser = "NT AUTHORITY\SYSTEM"
+    $PSArgs  = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ScriptFile`""
+    if ($ExtraArgs) { $PSArgs += " $ExtraArgs" }
+
+    $Action   = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $PSArgs
+    $Settings = New-ScheduledTaskSettingsSet `
+        -RunOnlyIfNetworkAvailable `
+        -StartWhenAvailable `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+
+    # ลบ Task เก่าก่อน (ถ้ามี)
+    schtasks /delete /tn $TaskName /f 2>$null | Out-Null
+
+    Register-ScheduledTask `
+        -TaskName    $TaskName `
+        -Action      $Action `
+        -Trigger     $Triggers `
+        -Settings    $Settings `
+        -User        $RunUser `
+        -RunLevel    Highest `
+        -Description $Description `
+        -Force | Out-Null
+
+    Write-SAMLog "Task registered: $TaskName"
+}
+
+# ==========================================
+# INSTALL: ลงทะเบียน Scheduled Tasks ทั้งหมด
+# ==========================================
+function Install-SAMTasks {
+    Write-SAMLog "=== Installing SAM Scheduled Tasks ==="
+
+    # ลบ Legacy Tasks เก่าๆ
+    foreach ($OldTask in @("JARVIS_Smart_Sync","SAM_Smart_Sync","SAM_Agent_DailySync")) {
+        schtasks /delete /tn $OldTask /f 2>$null | Out-Null
+    }
+
+    # --------------------------------------------------
+    # TASK 1: SAM_Agent_Sync — เก็บข้อมูล + Delta Sync
+    #   ทุก Startup + ทุก 2 ชั่วโมง (08:00 - 22:00)
+    # --------------------------------------------------
+    $T1_Startup = New-ScheduledTaskTrigger -AtStartup
+    $T1_Repeat  = New-ScheduledTaskTrigger -Once -At "08:00AM" `
+                      -RepetitionInterval (New-TimeSpan -Hours 2) `
+                      -RepetitionDuration (New-TimeSpan -Hours 14)
+    Register-SAMTask `
+        -TaskName    $TASK_AGENT_SYNC `
+        -ScriptFile  $AgentScript `
+        -ExtraArgs   "-Silent -DeltaOnly" `
+        -Triggers    @($T1_Startup, $T1_Repeat) `
+        -Description "SAM: Collect system data and send Delta Sync every 2 hours"
+
+    # --------------------------------------------------
+    # TASK 2: SAM_C2_Poll — ดึง Remote Command จาก Cloud
+    #   ทุก 20 นาที ตลอดวัน
+    #   (เบาพอ, ตอบสนองเร็วพอ, ไม่กิน Supabase quota)
+    # --------------------------------------------------
+    $T2 = New-ScheduledTaskTrigger -Once -At "00:00AM" `
+              -RepetitionInterval (New-TimeSpan -Minutes 20)
+    Register-SAMTask `
+        -TaskName    $TASK_C2_POLL `
+        -ScriptFile  $AgentScript `
+        -ExtraArgs   "-Silent -C2Only" `
+        -Triggers    @($T2) `
+        -Description "SAM: C2 Command polling every 20 minutes"
+
+    # --------------------------------------------------
+    # TASK 3: SAM_FullSync_Daily — Force FullSync ทุก 2 วัน
+    #   ทำงาน 02:00 AM วันคู่ (Mon, Wed, Fri, Sun)
+    # --------------------------------------------------
+    $T3 = New-ScheduledTaskTrigger -Weekly `
+              -DaysOfWeek Monday,Wednesday,Friday,Sunday `
+              -At "02:00AM"
+    Register-SAMTask `
+        -TaskName    $TASK_FULL_SYNC `
+        -ScriptFile  $AgentScript `
+        -ExtraArgs   "-Silent -ForceFullSync" `
+        -Triggers    @($T3) `
+        -Description "SAM: Force Full Sync every 2 days"
+
+    # --------------------------------------------------
+    # TASK 4: SAM_Update_Check — ตรวจอัปเดต + Self-Heal
+    #   ทุกวัน 07:00 AM
+    # --------------------------------------------------
+    $T4 = New-ScheduledTaskTrigger -Daily -At "07:00AM"
+    Register-SAMTask `
+        -TaskName    $TASK_UPDATE_CHECK `
+        -ScriptFile  $UpdateScript `
+        -ExtraArgs   "-Silent" `
+        -Triggers    @($T4) `
+        -Description "SAM: Check for updates and self-heal corrupted files"
+
+    # --------------------------------------------------
+    # TASK 5: SAM_LogRotate — ตัด Log เก่า (เก็บ 10 วัน)
+    #   ทุกวัน 00:05 AM
+    # --------------------------------------------------
+    $T5 = New-ScheduledTaskTrigger -Daily -At "00:05AM"
+    Register-SAMTask `
+        -TaskName    $TASK_LOG_ROTATE `
+        -ScriptFile  $SchedulerScript `
+        -ExtraArgs   "-LogRotateOnly" `
+        -Triggers    @($T5) `
+        -Description "SAM: Rotate logs - keep 10 days"
+
+    Write-SAMLog "=== All SAM Tasks installed successfully ==="
+}
+
+# ==========================================
+# LOG ROTATION — เก็บ 10 วัน
+# ==========================================
+function Invoke-LogRotation {
+    $LogRetainDays = 10
+    $ArchiveDir    = "$WorkDir\LogArchive"
+
+    if (-not (Test-Path $ArchiveDir)) {
+        New-Item -ItemType Directory -Force -Path $ArchiveDir | Out-Null
+    }
+
+    # อ่าน Log file ทั้งหมด แยก line ตามวันที่
+    if (-not (Test-Path $LogFile)) { return }
+
+    try {
+        $CutoffDate = (Get-Date).AddDays(-$LogRetainDays)
+        $AllLines   = Get-Content $LogFile -Encoding UTF8 -ErrorAction Stop
+        $ValidLines = @()
+
+        foreach ($Line in $AllLines) {
+            # Parse timestamp จาก format: "yyyy-MM-dd HH:mm:ss"
+            if ($Line -match "^(\d{4}-\d{2}-\d{2})") {
+                try {
+                    $LineDate = [datetime]::ParseExact($Matches[1], "yyyy-MM-dd", $null)
+                    if ($LineDate -ge $CutoffDate) {
+                        $ValidLines += $Line
+                    }
+                } catch {
+                    $ValidLines += $Line  # เก็บ line ที่ parse วันไม่ได้ไว้
+                }
+            } else {
+                $ValidLines += $Line
+            }
+        }
+
+        # เขียนกลับ
+        $ValidLines | Out-File $LogFile -Encoding UTF8 -Force
+
+        Write-SAMLog "Log rotation complete. Kept $($ValidLines.Count) lines (>= $($CutoffDate.ToString('yyyy-MM-dd')))"
+
+    } catch {
+        Write-SAMLog "Log rotation error: $($_.Exception.Message)" -Level "WARN"
+    }
+
+    # ลบ HTML Report เก่าเกิน 10 วัน
+    try {
+        Get-ChildItem -Path $WorkDir -Filter "*.html" |
+            Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$LogRetainDays) } |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+        Write-SAMLog "Old HTML reports cleaned up."
+    } catch {}
+}
+
+# ==========================================
+# STATUS: แสดง Task Status
+# ==========================================
+function Show-SAMStatus {
+    $TaskList = @(
+        $TASK_AGENT_SYNC,
+        $TASK_C2_POLL,
+        $TASK_FULL_SYNC,
+        $TASK_UPDATE_CHECK,
+        $TASK_LOG_ROTATE
+    )
+
+    Write-Host "`n╔══════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-Host "║   S.A.M. SCHEDULER STATUS v$SAM_VERSION   ║" -ForegroundColor Cyan
+    Write-Host "╚══════════════════════════════════════╝`n" -ForegroundColor Cyan
+
+    foreach ($TName in $TaskList) {
+        $Task = Get-ScheduledTask -TaskName $TName -ErrorAction SilentlyContinue
+        $Info = Get-ScheduledTaskInfo -TaskName $TName -ErrorAction SilentlyContinue
+        if ($Task) {
+            $State     = $Task.State
+            $LastRun   = if ($Info.LastRunTime -and $Info.LastRunTime.Year -gt 2000) { $Info.LastRunTime.ToString("yyyy-MM-dd HH:mm") } else { "Never" }
+            $NextRun   = if ($Info.NextRunTime -and $Info.NextRunTime.Year -gt 2000) { $Info.NextRunTime.ToString("yyyy-MM-dd HH:mm") } else { "N/A" }
+            $LastResult = $Info.LastTaskResult
+            $StatusColor = if ($State -eq "Ready" -or $State -eq "Running") { "Green" } else { "Red" }
+            Write-Host "  [✓] $TName" -ForegroundColor $StatusColor
+            Write-Host "      State: $State | Last: $LastRun | Next: $NextRun | Result: $LastResult" -ForegroundColor Gray
+        } else {
+            Write-Host "  [✗] $TName  (NOT INSTALLED)" -ForegroundColor Red
+        }
+    }
+
+    Write-Host ""
+    if (Test-Path $StateFile) {
+        $State = Get-Content $StateFile | ConvertFrom-Json
+        Write-Host "  Last State Hash  : $($State.Hash)" -ForegroundColor DarkCyan
+        Write-Host "  Last Write Time  : $($State.LastWriteTime)" -ForegroundColor DarkCyan
+    }
+    Write-Host ""
+}
+
+# ==========================================
+# UNINSTALL
+# ==========================================
+function Uninstall-SAM {
+    Write-SAMLog "=== SAM Uninstall requested ==="
+    foreach ($TName in @($TASK_AGENT_SYNC,$TASK_C2_POLL,$TASK_FULL_SYNC,$TASK_UPDATE_CHECK,$TASK_LOG_ROTATE)) {
+        schtasks /delete /tn $TName /f 2>$null | Out-Null
+        Write-SAMLog "Removed task: $TName"
+    }
+
+    # Delayed folder removal via temp bat
+    $CleanupBat = "$env:TEMP\sam_cleanup_$((Get-Random)).bat"
+    @"
+@echo off
+ping 127.0.0.1 -n 4 >nul
+icacls "C:\IT_Support" /reset /T /C /Q >nul 2>&1
+attrib -h -s -r "C:\IT_Support" /s /d >nul 2>&1
+rmdir /s /q "C:\IT_Support"
+del "%~f0"
+"@ | Out-File $CleanupBat -Encoding ASCII
+    Start-Process "cmd.exe" -ArgumentList "/c `"$CleanupBat`"" -WindowStyle Hidden
+    Write-Host "SAM uninstall queued. Folder will be removed momentarily." -ForegroundColor Yellow
+}
+
+# ==========================================
+# ENTRY POINT — สวิตช์หลัก
+# ==========================================
+
+# Special mode: ถูกเรียกจาก Task ให้ Rotate Log เท่านั้น
+if ($PSBoundParameters.ContainsKey('LogRotateOnly') -or ($args -contains "-LogRotateOnly")) {
+    Invoke-LogRotation
+    exit 0
+}
+
+if ($Status)    { Show-SAMStatus; exit 0 }
+if ($Uninstall) { Uninstall-SAM;  exit 0 }
+
+# Default / -Setup: ติดตั้งทุกอย่าง
+Invoke-FolderBootstrap
+Install-SAMTasks
+Write-SAMLog "SAM Scheduler v$SAM_VERSION setup complete."
+
+if (-not $Setup) {
+    # ถ้าไม่ได้ผ่าน -Setup flag ให้รัน Agent ทันที (Initial Deploy)
+    Write-SAMLog "Running Agent immediately (initial deploy)..."
+    Start-Process powershell.exe -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$AgentScript`" -ForceFullSync" -WindowStyle Hidden
+}

@@ -1,0 +1,414 @@
+﻿# ==============================================================================
+# S.A.M. UPDATE  (Smart Agent Management - Self-Healing & Auto-Updater)
+# VERSION     : 3.0.0
+# FILE        : SAM_Update.ps1
+# ROLE        : ตรวจสอบ version, ดาวน์โหลด patch, ตรวจ hash, ซ่อมไฟล์เสีย
+#               ถูกเรียกโดย SAM_Scheduler ทุกวัน 07:00 น.
+# ==============================================================================
+param(
+    [switch]$Silent,      # ไม่แสดง console
+    [switch]$ForceCheck   # บังคับตรวจแม้เพิ่งตรวจไปแล้ว
+)
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+
+# ==========================================
+# CONSTANTS
+# ==========================================
+$SAM_VERSION = "3.0.0"
+$WorkDir     = "C:\IT_Support"
+$LogFile     = "$WorkDir\SAM_Log.txt"
+
+# Remote URLs (GitHub RAW)
+$BaseRawUrl  = "https://raw.githubusercontent.com/johnapichat-dotcom/sam-agent-update/main"
+$VersionUrl  = "$BaseRawUrl/version.txt"           # รูปแบบ: 3.0.1|sha256_agent|sha256_scheduler|sha256_update
+$AgentUrl    = "$BaseRawUrl/SAM_Agent.txt"         # ไฟล์จริง (นามสกุล .txt บน GitHub)
+$SchedulerUrl= "$BaseRawUrl/SAM_Scheduler.txt"
+$UpdateUrl   = "$BaseRawUrl/SAM_Update.txt"
+$SmartCtlUrl = "https://github.com/johnapichat-dotcom/sam-agent-update/releases/download/UpdateSAM/smartctl.exe"
+
+# Local paths
+$AgentScript     = "$WorkDir\SAM_Agent.ps1"
+$SchedulerScript = "$WorkDir\SAM_Scheduler.ps1"
+$UpdateScript    = "$WorkDir\SAM_Update.ps1"
+$SmartCtlPath    = "$WorkDir\smartctl.exe"
+$UpdateStateFile = "$WorkDir\UpdateState.json"
+
+# Task names (ต้องตรงกับ Scheduler)
+$TASK_AGENT_SYNC   = "SAM_Agent_Sync"
+$TASK_C2_POLL      = "SAM_C2_Poll"
+$TASK_FULL_SYNC    = "SAM_FullSync_Daily"
+$TASK_UPDATE_CHECK = "SAM_Update_Check"
+$TASK_LOG_ROTATE   = "SAM_LogRotate"
+
+# ==========================================
+# UTILITY
+# ==========================================
+function Write-SAMLog {
+    param([string]$Message, [string]$Level = "INFO")
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $Line = "$Timestamp [$Level] [Update] $Message"
+    try { Add-Content -Path $LogFile -Value $Line -Encoding UTF8 -ErrorAction SilentlyContinue } catch {}
+    if (-not $Silent) { Write-Host $Line -ForegroundColor Magenta }
+}
+
+function Get-FileHash256 {
+    param([string]$FilePath)
+    try {
+        if (-not (Test-Path $FilePath)) { return "" }
+        $SHA256 = [System.Security.Cryptography.SHA256]::Create()
+        $Stream = [System.IO.File]::OpenRead($FilePath)
+        $Hash   = [BitConverter]::ToString($SHA256.ComputeHash($Stream)) -replace '-'
+        $Stream.Close()
+        return $Hash.ToLower()
+    } catch { return "" }
+}
+
+function Get-StringHash256 {
+    param([string]$Content)
+    try {
+        $SHA256 = [System.Security.Cryptography.SHA256]::Create()
+        $Bytes  = [System.Text.Encoding]::UTF8.GetBytes($Content)
+        return ([BitConverter]::ToString($SHA256.ComputeHash($Bytes)) -replace '-').ToLower()
+    } catch { return "" }
+}
+
+function Test-ScriptIntegrity {
+    param([string]$FilePath, [string]$ExpectedHash = "")
+    # ตรวจขั้นพื้นฐาน: ไฟล์มีอยู่และมีขนาดสมเหตุสมผล (> 1KB)
+    if (-not (Test-Path $FilePath)) { return $false }
+    $Size = (Get-Item $FilePath).Length
+    if ($Size -lt 1024) {
+        Write-SAMLog "File too small ($Size bytes): $FilePath" -Level "WARN"
+        return $false
+    }
+    # ตรวจ syntax เบื้องต้น (ต้องมี param block หรือ function หรือ #)
+    try {
+        $Content = Get-Content $FilePath -Raw -ErrorAction Stop
+        if ($Content -notmatch "(?i)(param\s*\(|function\s+\w|#.*SAM)") {
+            Write-SAMLog "File failed syntax sanity check: $FilePath" -Level "WARN"
+            return $false
+        }
+    } catch { return $false }
+    # ถ้ามี expected hash ให้ตรวจด้วย
+    if ($ExpectedHash -and $ExpectedHash.Length -eq 64) {
+        $ActualHash = Get-FileHash256 $FilePath
+        if ($ActualHash -ne $ExpectedHash.ToLower()) {
+            Write-SAMLog "Hash mismatch: $FilePath (expected $ExpectedHash, got $ActualHash)" -Level "WARN"
+            return $false
+        }
+    }
+    return $true
+}
+
+function Download-SafeScript {
+    param([string]$Url, [string]$OutPath, [string]$ExpectedHash = "", [string]$Label = "")
+    $TmpPath = "$env:TEMP\SAM_tmp_$([System.IO.Path]::GetRandomFileName()).ps1"
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $TmpPath -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+
+        # Verify integrity
+        if (-not (Test-ScriptIntegrity -FilePath $TmpPath -ExpectedHash $ExpectedHash)) {
+            Write-SAMLog "Downloaded file failed integrity check: $Label" -Level "ERROR"
+            Remove-Item $TmpPath -Force -ErrorAction SilentlyContinue
+            return $false
+        }
+
+        # Atomic replace: backup → replace → remove backup
+        $BackupPath = "$OutPath.bak"
+        if (Test-Path $OutPath) {
+            Copy-Item $OutPath $BackupPath -Force -ErrorAction SilentlyContinue
+        }
+        Move-Item $TmpPath $OutPath -Force -ErrorAction Stop
+        Remove-Item $BackupPath -Force -ErrorAction SilentlyContinue
+
+        Write-SAMLog "Updated successfully: $Label ($OutPath)"
+        return $true
+    } catch {
+        Write-SAMLog "Download failed for $Label ($Url): $($_.Exception.Message)" -Level "ERROR"
+        # Rollback ถ้ามี backup
+        if (Test-Path "$OutPath.bak") {
+            Copy-Item "$OutPath.bak" $OutPath -Force -ErrorAction SilentlyContinue
+            Write-SAMLog "Rolled back to backup: $Label" -Level "WARN"
+        }
+        Remove-Item $TmpPath -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+}
+
+# ==========================================
+# NETWORK CHECK
+# ==========================================
+Write-SAMLog "=== SAM Update Check v$SAM_VERSION ==="
+$NetOK = $false
+try {
+    $R = Invoke-WebRequest -Uri "http://www.msftconnecttest.com/connecttest.txt" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+    if ($R.Content -match "Microsoft Connect Test") { $NetOK = $true }
+} catch {}
+
+if (-not $NetOK) {
+    Write-SAMLog "Network unavailable. Update check skipped." -Level "WARN"
+    exit 0
+}
+
+# ==========================================
+# SELF-HEALING: ตรวจไฟล์สำคัญก่อน
+# ==========================================
+Write-SAMLog "--- Self-Healing Check ---"
+
+$FilesToCheck = @{
+    $AgentScript     = @{ Url = $AgentUrl;      Label = "SAM_Agent" }
+    $SchedulerScript = @{ Url = $SchedulerUrl;  Label = "SAM_Scheduler" }
+    $UpdateScript    = @{ Url = $UpdateUrl;      Label = "SAM_Update" }
+}
+
+$HealingOccurred = $false
+foreach ($FilePath in $FilesToCheck.Keys) {
+    $Info = $FilesToCheck[$FilePath]
+    if (-not (Test-ScriptIntegrity -FilePath $FilePath)) {
+        Write-SAMLog "Corrupted/missing: $($Info.Label). Attempting self-heal..." -Level "WARN"
+        $Healed = Download-SafeScript -Url $Info.Url -OutPath $FilePath -Label $Info.Label
+        if ($Healed) {
+            $HealingOccurred = $true
+            Write-SAMLog "Self-healed: $($Info.Label)" -Level "INFO"
+        } else {
+            Write-SAMLog "Self-heal FAILED: $($Info.Label)" -Level "ERROR"
+        }
+    } else {
+        Write-SAMLog "OK: $($Info.Label)"
+    }
+}
+
+# smartctl.exe
+if (-not (Test-Path $SmartCtlPath) -or (Get-Item $SmartCtlPath).Length -lt 10240) {
+    Write-SAMLog "smartctl.exe missing/corrupt. Downloading..." -Level "WARN"
+    try {
+        Invoke-WebRequest -Uri $SmartCtlUrl -OutFile $SmartCtlPath -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
+        Write-SAMLog "smartctl.exe downloaded OK."
+    } catch {
+        Write-SAMLog "smartctl.exe download failed: $($_.Exception.Message)" -Level "ERROR"
+    }
+}
+
+# ==========================================
+# SCHEDULED TASKS HEALTH CHECK
+# ==========================================
+Write-SAMLog "--- Scheduled Tasks Health Check ---"
+$TasksOK = $true
+foreach ($TName in @($TASK_AGENT_SYNC, $TASK_C2_POLL, $TASK_FULL_SYNC, $TASK_UPDATE_CHECK, $TASK_LOG_ROTATE)) {
+    $Task = Get-ScheduledTask -TaskName $TName -ErrorAction SilentlyContinue
+    if (-not $Task) {
+        Write-SAMLog "Task missing: $TName → Re-installing via Scheduler..." -Level "WARN"
+        $TasksOK = $false
+    } elseif ($Task.State -eq "Disabled") {
+        Write-SAMLog "Task disabled: $TName → Enabling..." -Level "WARN"
+        try { Enable-ScheduledTask -TaskName $TName -ErrorAction Stop | Out-Null; Write-SAMLog "Task re-enabled: $TName" } catch {}
+        $TasksOK = $false
+    }
+}
+
+if (-not $TasksOK) {
+    Write-SAMLog "Re-installing all tasks via SAM_Scheduler..."
+    try {
+        Start-Process powershell.exe -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$SchedulerScript`" -Setup" -WindowStyle Hidden -Wait
+        Write-SAMLog "Task re-installation triggered."
+    } catch { Write-SAMLog "Task re-installation failed: $($_.Exception.Message)" -Level "ERROR" }
+}
+
+# ==========================================
+# VERSION CHECK & UPDATE
+# ==========================================
+Write-SAMLog "--- Version Check ---"
+
+# โหลด Update State (ป้องกันตรวจซ้ำในวันเดียวกัน)
+$UpdateState = $null
+if (Test-Path $UpdateStateFile) {
+    try { $UpdateState = Get-Content $UpdateStateFile -Raw | ConvertFrom-Json } catch {}
+}
+$LastCheck = if ($UpdateState -and $UpdateState.LastCheck) { [datetime]$UpdateState.LastCheck } else { [datetime]::MinValue }
+$HoursSince = ((Get-Date) - $LastCheck).TotalHours
+
+if (-not $ForceCheck -and $HoursSince -lt 20) {
+    Write-SAMLog "Update check skipped (last check $([math]::Round($HoursSince,1)) hrs ago). Use -ForceCheck to override."
+    # ยังตรวจ self-healing ข้างบนแล้ว แต่ข้ามการดาวน์โหลด version ใหม่
+} else {
+    try {
+        $VersionRaw = (Invoke-WebRequest -Uri $VersionUrl -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop).Content.Trim()
+        # Format: VERSION|hash_agent|hash_scheduler|hash_update
+        $VerParts    = $VersionRaw -split '\|'
+        $RemoteVer   = $VerParts[0].Trim()
+        $RemoteHashA = if ($VerParts.Count -gt 1) { $VerParts[1].Trim() } else { "" }
+        $RemoteHashS = if ($VerParts.Count -gt 2) { $VerParts[2].Trim() } else { "" }
+        $RemoteHashU = if ($VerParts.Count -gt 3) { $VerParts[3].Trim() } else { "" }
+
+        Write-SAMLog "Local: v$SAM_VERSION | Remote: v$RemoteVer"
+
+        # เปรียบเทียบ version (simple semver string compare)
+        $LocalParts  = $SAM_VERSION -split '\.' | ForEach-Object { [int]$_ }
+        $RemoteParts = $RemoteVer -split '\.' | ForEach-Object { [int]$_ }
+        $NeedUpdate  = $false
+
+        for ($i = 0; $i -lt [math]::Max($LocalParts.Count, $RemoteParts.Count); $i++) {
+            $L = if ($i -lt $LocalParts.Count)  { $LocalParts[$i] }  else { 0 }
+            $R = if ($i -lt $RemoteParts.Count) { $RemoteParts[$i] } else { 0 }
+            if ($R -gt $L) { $NeedUpdate = $true; break }
+            if ($L -gt $R) { break }
+        }
+
+        if ($NeedUpdate) {
+            Write-SAMLog "New version available: v$RemoteVer. Updating..."
+
+            $UpdateResults = @{}
+
+            # ลำดับการอัปเดต: Update ก่อน (เพื่อให้ตัวใหม่ทำงานต่อ), แล้ว Scheduler, แล้ว Agent
+            $UpdateResults["SAM_Update"]     = Download-SafeScript -Url $UpdateUrl      -OutPath $UpdateScript    -ExpectedHash $RemoteHashU -Label "SAM_Update"
+            $UpdateResults["SAM_Scheduler"]  = Download-SafeScript -Url $SchedulerUrl   -OutPath $SchedulerScript -ExpectedHash $RemoteHashS -Label "SAM_Scheduler"
+            $UpdateResults["SAM_Agent"]      = Download-SafeScript -Url $AgentUrl       -OutPath $AgentScript     -ExpectedHash $RemoteHashA -Label "SAM_Agent"
+
+            $AllOK = $UpdateResults.Values | Where-Object { $_ -eq $false } | Measure-Object | Select-Object -ExpandProperty Count
+            if ($AllOK -eq 0) {
+                Write-SAMLog "All files updated to v$RemoteVer. Re-installing tasks..."
+                # Re-register tasks (อาจมีการเปลี่ยน argument หรือ schedule ใน version ใหม่)
+                try {
+                    Start-Process powershell.exe -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$SchedulerScript`" -Setup" -WindowStyle Hidden -Wait
+                    Write-SAMLog "Tasks re-registered post-update."
+                } catch { Write-SAMLog "Task re-registration post-update failed." -Level "WARN" }
+            } else {
+                Write-SAMLog "Partial update — $AllOK file(s) failed. Will retry next cycle." -Level "WARN"
+            }
+        } else {
+            Write-SAMLog "Already on latest version (v$SAM_VERSION)."
+
+            # แม้ไม่มี version ใหม่ ให้ตรวจ hash ว่าไฟล์ถูกแก้ไขหรือเสียหรือเปล่า
+            if ($RemoteHashA -or $RemoteHashS -or $RemoteHashU) {
+                Write-SAMLog "Verifying file hashes against remote..."
+                $HashChecks = @{
+                    $AgentScript     = $RemoteHashA
+                    $SchedulerScript = $RemoteHashS
+                    $UpdateScript    = $RemoteHashU
+                }
+                foreach ($FP in $HashChecks.Keys) {
+                    $ExpHash = $HashChecks[$FP]
+                    if ($ExpHash -and $ExpHash.Length -eq 64) {
+                        $ActHash = Get-FileHash256 $FP
+                        if ($ActHash -ne $ExpHash.ToLower()) {
+                            Write-SAMLog "Hash mismatch detected for $FP — restoring from remote." -Level "WARN"
+                            # ดาวน์โหลดซ่อมจาก URL ที่ตรงกัน
+                            $TargetUrl = switch ($FP) {
+                                $AgentScript     { $AgentUrl }
+                                $SchedulerScript { $SchedulerUrl }
+                                $UpdateScript    { $UpdateUrl }
+                            }
+                            Download-SafeScript -Url $TargetUrl -OutPath $FP -ExpectedHash $ExpHash -Label (Split-Path $FP -Leaf) | Out-Null
+                        }
+                    }
+                }
+            }
+        }
+
+        # บันทึกเวลาตรวจล่าสุด
+        try {
+            @{ LastCheck = (Get-Date).ToString("o"); LastVersion = $RemoteVer } |
+                ConvertTo-Json | Out-File $UpdateStateFile -Encoding UTF8
+        } catch {}
+
+    } catch {
+        Write-SAMLog "Version check failed: $($_.Exception.Message)" -Level "ERROR"
+    }
+}
+
+# ==========================================
+# BATCH HELPER FILES (ถ้าหายไป)
+# ==========================================
+Write-SAMLog "--- Checking helper .bat files ---"
+
+$ForceBat = @'
+@echo off
+color 0A
+title S.A.M. Manual Force Sync
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b
+)
+cd /d C:\IT_Support
+if exist "LastState.json" del /q "LastState.json"
+powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "SAM_Agent.ps1" -ForceFullSync
+exit
+'@
+
+$DeepBat = @'
+@echo off
+color 0D
+title S.A.M. Deep Diagnostic Scan
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b
+)
+cd /d C:\IT_Support
+powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "SAM_Agent.ps1" -DeepScan
+exit
+'@
+
+$UninstallBat = @'
+@echo off
+color 0C
+title S.A.M. Uninstaller
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    powershell -Command "Start-Process '%~dpnx0' -Verb RunAs"
+    exit /b
+)
+cd /d C:\
+powershell.exe -ExecutionPolicy Bypass -File "C:\IT_Support\SAM_Scheduler.ps1" -Uninstall
+exit
+'@
+
+$UpdateCheckBat = @'
+@echo off
+color 0B
+title S.A.M. Force Update Check
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b
+)
+cd /d C:\IT_Support
+powershell.exe -ExecutionPolicy Bypass -File "SAM_Update.ps1" -ForceCheck
+pause
+exit
+'@
+
+$StatusBat = @'
+@echo off
+color 0E
+title S.A.M. Status
+cd /d C:\IT_Support
+powershell.exe -ExecutionPolicy Bypass -File "SAM_Scheduler.ps1" -Status
+pause
+exit
+'@
+
+$BatFiles = @{
+    "SAM_ForceSync.bat"    = $ForceBat
+    "SAM_DeepScan.bat"     = $DeepBat
+    "SAM_Uninstall.bat"    = $UninstallBat
+    "SAM_UpdateCheck.bat"  = $UpdateCheckBat
+    "SAM_Status.bat"       = $StatusBat
+}
+
+foreach ($BatName in $BatFiles.Keys) {
+    $BatPath = "$WorkDir\$BatName"
+    if (-not (Test-Path $BatPath)) {
+        try {
+            [System.IO.File]::WriteAllText($BatPath, $BatFiles[$BatName], [System.Text.Encoding]::ASCII)
+            Write-SAMLog "Restored helper: $BatName"
+        } catch { Write-SAMLog "Failed to write $BatName" -Level "WARN" }
+    }
+}
+
+# ==========================================
+# DONE
+# ==========================================
+Write-SAMLog "=== SAM Update complete ==="
