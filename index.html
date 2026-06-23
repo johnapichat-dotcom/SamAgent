@@ -1,205 +1,649 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>S.A.M. Web Provisioning Portal</title>
+    <title>S.A.M. Web Provisioning Portal v3.0.0</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        :root {
+            --c-bg:       #0d0d0d;
+            --c-panel:    #161616;
+            --c-panel2:   #1e1e1e;
+            --c-border:   #00e5ff;
+            --c-accent:   #00e5ff;
+            --c-accent2:  #0072ff;
+            --c-warn:     #f59e0b;
+            --c-ok:       #22c55e;
+            --c-error:    #ef4444;
+            --c-text:     #e2e8f0;
+            --c-muted:    #64748b;
+        }
+
+        * { box-sizing: border-box; }
+
         body {
-            background-color: #121212;
-            color: #e0e0e0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--c-bg);
+            color: var(--c-text);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            min-height: 100vh;
         }
-        .jarvis-border {
-            border: 1px solid #00e5ff;
-            box-shadow: 0 0 10px rgba(0, 229, 255, 0.2);
+
+        /* Grid background */
+        body::before {
+            content: '';
+            position: fixed; inset: 0; z-index: 0;
+            background-image:
+                linear-gradient(rgba(0,229,255,.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,229,255,.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
         }
-        .jarvis-text {
-            color: #00e5ff;
+
+        .main-wrap {
+            position: relative; z-index: 1;
+            display: flex; flex-direction: column;
+            align-items: center;
+            padding: 2rem 1rem 4rem;
+            gap: 1.5rem;
         }
-        .jarvis-bg {
-            background-color: rgba(0, 229, 255, 0.1);
+
+        /* Header */
+        .sam-header {
+            text-align: center;
+            width: 100%; max-width: 580px;
         }
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: #1e1e1e; }
-        ::-webkit-scrollbar-thumb { background: #00e5ff; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #00b3cc; }
+        .sam-title {
+            font-size: 1.6rem;
+            font-weight: 800;
+            letter-spacing: .15em;
+            color: var(--c-accent);
+            text-transform: uppercase;
+            text-shadow: 0 0 18px rgba(0,229,255,.4);
+            display: flex; align-items: center; justify-content: center; gap: .5rem;
+        }
+        .sam-sub {
+            font-size: .75rem;
+            color: var(--c-muted);
+            letter-spacing: .1em;
+            margin-top: .3rem;
+        }
+
+        /* Version badge */
+        .ver-badge {
+            display: inline-flex; align-items: center; gap: .4rem;
+            background: rgba(0,229,255,.08);
+            border: 1px solid rgba(0,229,255,.25);
+            color: var(--c-accent);
+            font-size: .68rem; font-weight: 700;
+            letter-spacing: .1em;
+            padding: .25rem .7rem;
+            border-radius: 999px;
+            margin-top: .6rem;
+        }
+        .ver-dot { width:7px; height:7px; border-radius:50%; background:var(--c-ok); animation: pulse 2s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+        /* Card */
+        .card {
+            width: 100%; max-width: 580px;
+            background: var(--c-panel);
+            border: 1px solid rgba(0,229,255,.18);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 0 30px rgba(0,229,255,.05);
+        }
+
+        /* Mode toggle */
+        .mode-tabs {
+            display: grid; grid-template-columns: 1fr 1fr;
+            gap: .5rem; margin-bottom: 1.5rem;
+        }
+        .mode-tab {
+            padding: .65rem;
+            border-radius: 8px;
+            border: 1px solid #333;
+            background: var(--c-panel2);
+            color: var(--c-muted);
+            font-size: .8rem; font-weight: 600;
+            text-align: center;
+            cursor: pointer;
+            transition: all .2s;
+            display: flex; align-items: center; justify-content: center; gap: .4rem;
+        }
+        .mode-tab:hover { border-color: rgba(0,229,255,.4); color: var(--c-text); }
+        .mode-tab.active {
+            background: rgba(0,229,255,.1);
+            border-color: var(--c-accent);
+            color: var(--c-accent);
+            box-shadow: 0 0 12px rgba(0,229,255,.15);
+        }
+
+        /* Section label */
+        .sec-label {
+            font-size: .7rem;
+            font-weight: 700;
+            letter-spacing: .12em;
+            color: var(--c-muted);
+            text-transform: uppercase;
+            margin-bottom: .9rem;
+            display: flex; align-items: center; gap: .5rem;
+        }
+        .sec-label::after {
+            content: '';
+            flex: 1; height: 1px;
+            background: rgba(255,255,255,.07);
+        }
+
+        /* Form elements */
+        label.field-label {
+            display: block;
+            font-size: .78rem;
+            font-weight: 600;
+            color: #94a3b8;
+            margin-bottom: .4rem;
+        }
+
+        .field-row { margin-bottom: 1.1rem; }
+
+        select, input[type="text"] {
+            width: 100%;
+            background: var(--c-panel2);
+            border: 1px solid #2d2d2d;
+            border-radius: 7px;
+            padding: .6rem .85rem;
+            color: var(--c-text);
+            font-size: .88rem;
+            appearance: none;
+            -webkit-appearance: none;
+            transition: border-color .2s, box-shadow .2s;
+            outline: none;
+        }
+        select:focus, input[type="text"]:focus {
+            border-color: var(--c-accent);
+            box-shadow: 0 0 0 3px rgba(0,229,255,.1);
+        }
+        select option { background: #1e1e1e; }
+
+        .pair-row {
+            display: grid; grid-template-columns: 1fr auto;
+            gap: .5rem;
+        }
+        .pair-row select { width: 120px; }
+
+        /* Migrate info box */
+        .info-box {
+            background: rgba(245,158,11,.07);
+            border: 1px solid rgba(245,158,11,.3);
+            border-radius: 8px;
+            padding: .85rem 1rem;
+            font-size: .78rem;
+            color: #fcd34d;
+            line-height: 1.6;
+            margin-bottom: 1.2rem;
+            display: flex; gap: .6rem;
+        }
+        .info-box svg { flex-shrink: 0; margin-top: 2px; }
+
+        /* Generate button */
+        .btn-generate {
+            width: 100%;
+            background: linear-gradient(135deg, #00e5ff, #0072ff);
+            color: #000;
+            font-weight: 800;
+            font-size: .85rem;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            padding: .85rem;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: all .25s;
+            display: flex; align-items: center; justify-content: center; gap: .5rem;
+            box-shadow: 0 0 20px rgba(0,229,255,.25);
+        }
+        .btn-generate:hover {
+            box-shadow: 0 0 35px rgba(0,229,255,.45);
+            transform: translateY(-1px);
+        }
+        .btn-generate:active { transform: translateY(0); }
+
+        /* Result box */
+        .result-card {
+            width: 100%; max-width: 580px;
+            background: var(--c-panel);
+            border: 1px solid rgba(0,229,255,.2);
+            border-radius: 12px;
+            padding: 1.4rem;
+            box-shadow: 0 0 25px rgba(0,229,255,.08);
+            display: none;
+        }
+        .result-card.visible { display: block; animation: slideUp .3s ease; }
+        @keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+
+        .result-label {
+            font-size: .7rem;
+            font-weight: 700;
+            letter-spacing: .1em;
+            color: var(--c-accent);
+            text-transform: uppercase;
+            margin-bottom: .6rem;
+            display: flex; align-items: center; gap: .4rem;
+        }
+
+        .step-pills {
+            display: flex; gap: .4rem; flex-wrap: wrap;
+            margin-bottom: .8rem;
+        }
+        .step-pill {
+            font-size: .68rem;
+            padding: .2rem .6rem;
+            border-radius: 999px;
+            background: rgba(0,229,255,.08);
+            border: 1px solid rgba(0,229,255,.2);
+            color: var(--c-accent);
+            font-weight: 600;
+        }
+
+        .cmd-box {
+            background: #080808;
+            border: 1px solid #1e1e1e;
+            border-radius: 8px;
+            padding: 1rem 1.1rem;
+            font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+            font-size: .72rem;
+            color: #4ade80;
+            word-break: break-all;
+            white-space: pre-wrap;
+            line-height: 1.6;
+            max-height: 280px;
+            overflow-y: auto;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #111; }
+        ::-webkit-scrollbar-thumb { background: rgba(0,229,255,.3); border-radius: 4px; }
+
+        .btn-copy {
+            width: 100%;
+            margin-top: .85rem;
+            background: var(--c-panel2);
+            border: 1px solid #333;
+            color: var(--c-text);
+            font-size: .82rem;
+            font-weight: 600;
+            padding: .65rem;
+            border-radius: 7px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center; gap: .45rem;
+            transition: all .2s;
+        }
+        .btn-copy:hover { border-color: var(--c-accent); color: var(--c-accent); }
+        .btn-copy.copied { background: rgba(34,197,94,.12); border-color: var(--c-ok); color: var(--c-ok); }
+
+        /* Warn note */
+        .deploy-note {
+            font-size: .72rem;
+            color: var(--c-warn);
+            background: rgba(245,158,11,.06);
+            border: 1px solid rgba(245,158,11,.2);
+            border-radius: 6px;
+            padding: .5rem .75rem;
+            margin-bottom: .85rem;
+            display: flex; align-items: flex-start; gap: .4rem;
+        }
+
+        /* Toast */
+        #toast {
+            position: fixed; bottom: 1.5rem; right: 1.5rem;
+            background: var(--c-ok);
+            color: #fff;
+            padding: .75rem 1.2rem;
+            border-radius: 8px;
+            font-size: .82rem; font-weight: 600;
+            display: flex; align-items: center; gap: .5rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,.4);
+            z-index: 100;
+            transform: translateY(80px);
+            opacity: 0;
+            transition: all .3s cubic-bezier(.34,1.56,.64,1);
+            pointer-events: none;
+        }
+        #toast.show { transform: translateY(0); opacity: 1; }
+
+        /* Footer */
+        .footer {
+            font-size: .67rem;
+            color: #2d2d2d;
+            text-align: center;
+            letter-spacing: .08em;
+        }
+
+        /* Validation shake */
+        @keyframes shake {
+            0%,100%{transform:translateX(0)}
+            20%,60%{transform:translateX(-6px)}
+            40%,80%{transform:translateX(6px)}
+        }
+        .shake { animation: shake .35s ease; border-color: var(--c-error) !important; }
     </style>
 </head>
-<body class="flex items-center justify-center min-h-screen p-4">
+<body>
+<div class="main-wrap">
 
-    <div class="w-full max-w-lg bg-[#1e1e1e] rounded-xl p-8 jarvis-border transition-all duration-300 relative">
+    <!-- Header -->
+    <div class="sam-header">
+        <div class="sam-title">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+            S.A.M. Provisioning
+        </div>
+        <div class="sam-sub">Zero-Touch Deployment Center</div>
+        <div class="ver-badge">
+            <span class="ver-dot"></span>
+            v3.0.0 &nbsp;·&nbsp; Enterprise Edition
+        </div>
+    </div>
 
-        <div class="text-center mb-8">
-            <h1 class="text-2xl font-bold tracking-wider jarvis-text uppercase flex justify-center items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
-                S.A.M. Provisioning
-            </h1>
-            <p class="text-sm text-gray-400 mt-2">Zero-Touch Deployment Center</p>
+    <!-- Main Card -->
+    <div class="card">
+
+        <!-- Mode Tabs -->
+        <div class="mode-tabs">
+            <div class="mode-tab active" id="tab-new" onclick="setMode('new')">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                New Install
+            </div>
+            <div class="mode-tab" id="tab-migrate" onclick="setMode('migrate')">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 12v-1a4 4 0 0 1 4-4h12"/><polyline points="16 3 20 7 16 11"/><path d="M20 12v1a4 4 0 0 1-4 4H4"/><polyline points="8 21 4 17 8 13"/></svg>
+                Migrate v2.2.4 → v3
+            </div>
         </div>
 
-        <form id="provisionForm" class="space-y-5">
-            <!-- 1. BU -->
-            <div>
-                <label class="block text-sm font-medium mb-1 text-gray-300" for="bu">1. Select Business Unit (BU)</label>
-                <select id="bu" class="w-full bg-[#2a2a2a] border border-gray-600 rounded p-2.5 text-white focus:outline-none focus:border-[#00e5ff] transition-colors appearance-none">
-                    <option value="" disabled selected>-- Choose BU --</option>
-                    <option value="Station">Station</option>
-                    <option value="OLP">OLP</option>
-                    <option value="Punthai">Punthai</option>
-                    <option value="PunthaiFC">PunthaiFC</option>
-                    <option value="MaxMart">MaxMart</option>
-                    <option value="ATL">ATL</option>
-                    <option value="Oil depot">Oil depot</option>
-                    <option value="AutoBacs">AutoBacs</option>
-                    <option value="Subway">Subway</option>
-                    <option value="CoffeeWorld">CoffeeWorld</option>
-                    <option value="Office">Office</option>
-                    <option value="LPG plant">LPG plant</option>
+        <!-- Migrate info banner (hidden in new mode) -->
+        <div id="migrate-info" class="info-box" style="display:none">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span>
+                คำสั่งนี้จะส่ง Migration Script ผ่าน C2 ไปยังเครื่องที่ติดตั้ง v2.2.4 อยู่<br>
+                เครื่องจะ Backup ข้อมูลเดิม → ดาวน์โหลด v3.0.0 ทั้ง 3 ไฟล์ → ลง Tasks ใหม่ → FullSync อัตโนมัติ<br>
+                <b>ไม่ต้องเข้าเครื่อง</b> — รอผลใน Supabase Dashboard
+            </span>
+        </div>
+
+        <!-- ── FORM ── -->
+        <div class="sec-label">Device Configuration</div>
+
+        <!-- BU -->
+        <div class="field-row">
+            <label class="field-label" for="bu">1 · Business Unit (BU)</label>
+            <select id="bu">
+                <option value="" disabled selected>— Choose BU —</option>
+                <option>Station</option><option>OLP</option><option>Punthai</option>
+                <option>PunthaiFC</option><option>MaxMart</option><option>ATL</option>
+                <option>Oil depot</option><option>AutoBacs</option><option>Subway</option>
+                <option>CoffeeWorld</option><option>Office</option><option>LPG plant</option>
+                <option>Other</option>
+            </select>
+        </div>
+
+        <!-- Branch + Device Type -->
+        <div class="field-row">
+            <label class="field-label" for="branch">2 · Branch Name / ID &nbsp;+&nbsp; Device Type</label>
+            <div class="pair-row">
+                <input type="text" id="branch" placeholder="e.g. 1234 หรือ แกลง11">
+                <select id="deviceType" style="width:120px">
+                    <option value="Pos">Pos</option><option value="Pos2">Pos2</option>
+                    <option value="Pos3">Pos3</option><option value="Office">Office</option>
+                    <option value="Office2">Office2</option><option value="NB">NB</option>
+                    <option value="AIO">AIO</option><option value="PC">PC</option>
                     <option value="Other">Other</option>
                 </select>
             </div>
-
-            <!-- 2. Branch ID -->
-            <div>
-                <label class="block text-sm font-medium mb-1 text-gray-300" for="branch">2. Branch Name / ID</label>
-                <div class="flex space-x-2">
-                    <input type="text" id="branch" placeholder="e.g. 1234 or แกลง11" class="w-2/3 bg-[#2a2a2a] border border-gray-600 rounded p-2.5 text-white focus:outline-none focus:border-[#00e5ff] transition-colors">
-                    <select id="deviceType" class="w-1/3 bg-[#2a2a2a] border border-gray-600 rounded p-2.5 text-white focus:outline-none focus:border-[#00e5ff] transition-colors appearance-none">
-                        <option value="Pos">Pos</option>
-                        <option value="Pos2">Pos2</option>
-                        <option value="Pos3">Pos3</option>
-                        <option value="Office">Office</option>
-                        <option value="Office2">Office2</option>
-                        <option value="NB">NB</option>
-                        <option value="AIO">AIO</option>
-                        <option value="PC">PC</option>
-                        <option value="Other">Other</option>
-                    </select>
-                </div>
-            </div>
-
-            <!-- 3. Province -->
-            <div>
-                <label class="block text-sm font-medium mb-1 text-gray-300" for="province">3. Province (จังหวัด)</label>
-                <select id="province" class="w-full bg-[#2a2a2a] border border-gray-600 rounded p-2.5 text-white focus:outline-none focus:border-[#00e5ff] transition-colors appearance-none">
-                    <option value="" disabled selected>-- Choose Province --</option>
-                    <option value="กรุงเทพมหานคร">กรุงเทพมหานคร</option><option value="กระบี่">กระบี่</option><option value="กาญจนบุรี">กาญจนบุรี</option><option value="กาฬสินธุ์">กาฬสินธุ์</option><option value="กำแพงเพชร">กำแพงเพชร</option><option value="ขอนแก่น">ขอนแก่น</option><option value="คลังน้ำมันลำปาง">คลังน้ำมันลำปาง</option><option value="คลังน้ำมันสุรินทร์">คลังน้ำมันสุรินทร์</option><option value="คลังลำลูกกา">คลังลำลูกกา</option><option value="คลังน้ำมันนครสวรรค์">คลังน้ำมันนครสวรรค์</option><option value="คลังน้ำมันพิษณุโลก">คลังน้ำมันพิษณุโลก</option><option value="คลังน้ำมันขอนแก่น">คลังน้ำมันขอนแก่น</option><option value="คลังน้ำมันแม่กลอง">คลังน้ำมันแม่กลอง</option><option value="คลังน้ำมันปักธงชัย">คลังน้ำมันปักธงชัย</option><option value="คลังศรีราชา">คลังศรีราชา</option><option value="คลังน้ำมันชุมพร">คลังน้ำมันชุมพร</option><option value="จันทบุรี">จันทบุรี</option><option value="ฉะเชิงเทรา">ฉะเชิงเทรา</option><option value="ชลบุรี">ชลบุรี</option><option value="ชัยนาท">ชัยนาท</option><option value="ชัยภูมิ">ชัยภูมิ</option><option value="ชุมพร">ชุมพร</option><option value="เชียงราย">เชียงราย</option><option value="เชียงใหม่">เชียงใหม่</option><option value="ตรัง">ตรัง</option><option value="ตราด">ตราด</option><option value="ตาก">ตาก</option><option value="นครนายก">นครนายก</option><option value="นครปฐม">นครปฐม</option><option value="นครพนม">นครพนม</option><option value="นครราชสีมา">นครราชสีมา</option><option value="นครศรีธรรมราช">นครศรีธรรมราช</option><option value="นครสวรรค์">นครสวรรค์</option><option value="นนทบุรี">นนทบุรี</option><option value="นราธิวาส">นราธิวาส</option><option value="น่าน">น่าน</option><option value="บึงกาฬ">บึงกาฬ</option><option value="บุรีรัมย์">บุรีรัมย์</option><option value="ปทุมธานี">ปทุมธานี</option><option value="ประจวบคีรีขันธ์">ประจวบคีรีขันธ์</option><option value="ปราจีนบุรี">ปราจีนบุรี</option><option value="ปัตตานี">ปัตตานี</option><option value="พระนครศรีอยุธยา">พระนครศรีอยุธยา</option><option value="พะเยา">พะเยา</option><option value="พังงา">พังงา</option><option value="พัทลุง">พัทลุง</option><option value="พิจิตร">พิจิตร</option><option value="พิษณุโลก">พิษณุโลก</option><option value="เพชรบุรี">เพชรบุรี</option><option value="เพชรบูรณ์">เพชรบูรณ์</option><option value="แพร่">แพร่</option><option value="ภูเก็ต">ภูเก็ต</option><option value="มหาสารคาม">มหาสารคาม</option><option value="มุกดาหาร">มุกดาหาร</option><option value="แม่ฮ่องสอน">แม่ฮ่องสอน</option><option value="ยโสธร">ยโสธร</option><option value="ยะลา">ยะลา</option><option value="ร้อยเอ็ด">ร้อยเอ็ด</option><option value="ระนอง">ระนอง</option><option value="ระยอง">ระยอง</option><option value="ราชบุรี">ราชบุรี</option><option value="โรงบรรจุ">โรงบรรจุ</option><option value="ลพบุรี">ลพบุรี</option><option value="ลำปาง">ลำปาง</option><option value="ลำพูน">ลำพูน</option><option value="เลย">เลย</option><option value="ศรีสะเกษ">ศรีสะเกษ</option><option value="สกลนคร">สกลนคร</option><option value="สงขลา">สงขลา</option><option value="สตูล">สตูล</option><option value="สมุทรปราการ">สมุทรปราการ</option><option value="สมุทรสงคราม">สมุทรสงคราม</option><option value="สมุทรสาคร">สมุทรสาคร</option><option value="สระแก้ว">สระแก้ว</option><option value="สระบุรี">สระบุรี</option><option value="สิงห์บุรี">สิงห์บุรี</option><option value="สุโขทัย">สุโขทัย</option><option value="สุพรรณบุรี">สุพรรณบุรี</option><option value="สุราษฎร์ธานี">สุราษฎร์ธานี</option><option value="สุรินทร์">สุรินทร์</option><option value="หนองคาย">หนองคาย</option><option value="หนองบัวลำภู">หนองบัวลำภู</option><option value="อ่างทอง">อ่างทอง</option><option value="อำนาจเจริญ">อำนาจเจริญ</option><option value="อุดรธานี">อุดรธานี</option><option value="อุตรดิตถ์">อุตรดิตถ์</option><option value="อุทัยธานี">อุทัยธานี</option><option value="อุบลราชธานี">อุบลราชธานี</option>
-                </select>
-            </div>
-
-            <!-- Generate Button -->
-            <button type="button" onclick="generatePayload()" class="w-full bg-[#00e5ff] hover:bg-[#00b3cc] text-black font-bold py-3 px-4 rounded shadow-[0_0_15px_rgba(0,229,255,0.4)] transition-all duration-300 mt-6 uppercase tracking-widest flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-9 5 18 3-9h5"/></svg>
-                Generate CMD Payload
-            </button>
-        </form>
-
-        <!-- Result Box -->
-        <div id="resultBox" class="hidden mt-8 bg-[#151515] p-4 rounded-lg border border-gray-700">
-            <h2 class="text-sm font-bold text-[#00e5ff] mb-2 flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
-                Deployment Command:
-            </h2>
-            <p class="text-xs text-yellow-400 mb-3 font-semibold">Copy this command and run it in <b>Command Prompt (Run as Administrator)</b>.</p>
-            
-            <div class="relative bg-black rounded p-4 font-mono text-xs sm:text-sm text-green-400 overflow-x-auto border border-gray-800 break-all">
-                <code id="cmdOutput"></code>
-            </div>
-            
-            <button onclick="copyToClipboard()" id="copyBtn" class="mt-4 w-full bg-gray-800 hover:bg-gray-700 text-white font-medium py-2.5 px-4 rounded transition-colors text-sm flex justify-center items-center gap-2 border border-gray-600">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                Copy to Clipboard
-            </button>
         </div>
 
-        <div class="mt-8 text-center text-xs text-gray-600 font-mono">
-            <p>S.A.M. Web Dashboard v2.2.4 (Enterprise Standalone)</p>
-            <p>DEVELOPER: Aphichat IT Support</p>
+        <!-- Province -->
+        <div class="field-row">
+            <label class="field-label" for="province">3 · Province (จังหวัด)</label>
+            <select id="province">
+                <option value="" disabled selected>— Choose Province —</option>
+                <option>กรุงเทพมหานคร</option><option>กระบี่</option><option>กาญจนบุรี</option>
+                <option>กาฬสินธุ์</option><option>กำแพงเพชร</option><option>ขอนแก่น</option>
+                <option>คลังน้ำมันลำปาง</option><option>คลังน้ำมันสุรินทร์</option><option>คลังลำลูกกา</option>
+                <option>คลังน้ำมันนครสวรรค์</option><option>คลังน้ำมันพิษณุโลก</option><option>คลังน้ำมันขอนแก่น</option>
+                <option>คลังน้ำมันแม่กลอง</option><option>คลังน้ำมันปักธงชัย</option><option>คลังศรีราชา</option>
+                <option>คลังน้ำมันชุมพร</option><option>จันทบุรี</option><option>ฉะเชิงเทรา</option>
+                <option>ชลบุรี</option><option>ชัยนาท</option><option>ชัยภูมิ</option>
+                <option>ชุมพร</option><option>เชียงราย</option><option>เชียงใหม่</option>
+                <option>ตรัง</option><option>ตราด</option><option>ตาก</option>
+                <option>นครนายก</option><option>นครปฐม</option><option>นครพนม</option>
+                <option>นครราชสีมา</option><option>นครศรีธรรมราช</option><option>นครสวรรค์</option>
+                <option>นนทบุรี</option><option>นราธิวาส</option><option>น่าน</option>
+                <option>บึงกาฬ</option><option>บุรีรัมย์</option><option>ปทุมธานี</option>
+                <option>ประจวบคีรีขันธ์</option><option>ปราจีนบุรี</option><option>ปัตตานี</option>
+                <option>พระนครศรีอยุธยา</option><option>พะเยา</option><option>พังงา</option>
+                <option>พัทลุง</option><option>พิจิตร</option><option>พิษณุโลก</option>
+                <option>เพชรบุรี</option><option>เพชรบูรณ์</option><option>แพร่</option>
+                <option>ภูเก็ต</option><option>มหาสารคาม</option><option>มุกดาหาร</option>
+                <option>แม่ฮ่องสอน</option><option>ยโสธร</option><option>ยะลา</option>
+                <option>ร้อยเอ็ด</option><option>ระนอง</option><option>ระยอง</option>
+                <option>ราชบุรี</option><option>โรงบรรจุ</option><option>ลพบุรี</option>
+                <option>ลำปาง</option><option>ลำพูน</option><option>เลย</option>
+                <option>ศรีสะเกษ</option><option>สกลนคร</option><option>สงขลา</option>
+                <option>สตูล</option><option>สมุทรปราการ</option><option>สมุทรสงคราม</option>
+                <option>สมุทรสาคร</option><option>สระแก้ว</option><option>สระบุรี</option>
+                <option>สิงห์บุรี</option><option>สุโขทัย</option><option>สุพรรณบุรี</option>
+                <option>สุราษฎร์ธานี</option><option>สุรินทร์</option><option>หนองคาย</option>
+                <option>หนองบัวลำภู</option><option>อ่างทอง</option><option>อำนาจเจริญ</option>
+                <option>อุดรธานี</option><option>อุตรดิตถ์</option><option>อุทัยธานี</option>
+                <option>อุบลราชธานี</option>
+            </select>
         </div>
+
+        <!-- Generate Button -->
+        <button class="btn-generate" onclick="generatePayload()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-9 5 18 3-9h5"/></svg>
+            <span id="btn-label">Generate Deployment Command</span>
+        </button>
     </div>
 
-    <!-- Notification Toast -->
-    <div id="toast" class="fixed bottom-5 right-5 bg-green-500 text-white px-6 py-3 rounded shadow-lg transform transition-all duration-300 translate-y-20 opacity-0 flex items-center gap-2 z-50 pointer-events-none">
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-        Command Copied to Clipboard!
+    <!-- Result Card -->
+    <div class="result-card" id="resultCard">
+
+        <div class="result-label">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
+            <span id="result-title">Deployment Command</span>
+        </div>
+
+        <!-- Steps -->
+        <div class="step-pills" id="stepPills"></div>
+
+        <!-- Warning note -->
+        <div class="deploy-note">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="flex-shrink:0;margin-top:2px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span id="note-text">Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง</span>
+        </div>
+
+        <div class="cmd-box" id="cmdOutput"></div>
+
+        <button class="btn-copy" id="copyBtn" onclick="copyToClipboard()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            Copy to Clipboard
+        </button>
     </div>
 
-    <script>
-        // URLs ล่าสุดจาก GitHub Repository ของบอส (ดึงผ่าน RAW ตรงๆ)
-        const AGENT_URL = "https://raw.githubusercontent.com/johnapichat-dotcom/sam-agent-update/main/SAM_Update.txt";
-        const SMARTCTL_URL = "https://raw.githubusercontent.com/johnapichat-dotcom/sam-agent-update/main/smartctl.exe";
+    <!-- Footer -->
+    <div class="footer">
+        <div>S.A.M. Web Provisioning Portal · v3.0.0 Enterprise</div>
+        <div style="margin-top:.2rem">DEVELOPER: Aphichat IT Support</div>
+    </div>
 
-        function generatePayload() {
-            const bu = document.getElementById('bu').value;
-            const branch = document.getElementById('branch').value;
-            const deviceType = document.getElementById('deviceType').value;
-            const province = document.getElementById('province').value;
+</div>
 
-            // ตรวจสอบว่ากรอกข้อมูลครบหรือไม่
-            if (!bu || !branch || !province || !deviceType) {
-                const form = document.querySelector('.jarvis-border');
-                form.classList.add('animate-pulse', 'border-red-500');
-                setTimeout(() => form.classList.remove('animate-pulse', 'border-red-500'), 1000);
-                return;
-            }
+<!-- Toast -->
+<div id="toast">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+    Copied to Clipboard!
+</div>
 
-            const fullBranch = `${branch.trim()}-${deviceType}`;
-            
-            // [JARVIS CORE] สร้างคำสั่ง CMD ทะลวงกำแพง 
-            // ใช้ Powershell ห่อหุ้มอีกชั้น เพื่อให้เขียนไฟล์ JSON เป็น UTF8 ได้ (รองรับภาษาไทย)
-            // และโหลดไฟล์ SAM_Update.txt มาเปลี่ยนนามสกุลเป็น .ps1 อัตโนมัติ หลบ Antivirus 100%
-            const psCommand = `powershell -WindowStyle Hidden -Command "New-Item -ItemType Directory -Force -Path 'C:\\IT_Support' | Out-Null; Set-Content -Path 'C:\\IT_Support\\SystemConfig.json' -Value '{\\"BU\\":\\"${bu}\\",\\"BranchID\\":\\"${fullBranch}\\",\\"Province\\":\\"${province}\\"}' -Encoding UTF8; Invoke-WebRequest -Uri '${AGENT_URL}' -OutFile 'C:\\IT_Support\\SAM_Agent.ps1' -UseBasicParsing; Invoke-WebRequest -Uri '${SMARTCTL_URL}' -OutFile 'C:\\IT_Support\\smartctl.exe' -UseBasicParsing; Start-Process powershell -ArgumentList '-WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\IT_Support\\SAM_Agent.ps1 -InitialDeploy'"`;
+<script>
+// ============================================================
+// GitHub RAW URLs — v3.0.0  (เปลี่ยนตรงนี้จุดเดียวเมื่ออัปเดต)
+// ============================================================
+const URLS = {
+    scheduler : "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent/SAM_Scheduler.txt",
+    agent     : "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent/SAM_Agent.txt",
+    update    : "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent/SAM_Update.txt",
+    smartctl  : "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent/smartctl.exe",
+    migrate   : "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Task/SAM_Migrate_v224_to_v300.ps1"
+};
 
-            // แสดงผลโค้ด
-            document.getElementById('cmdOutput').innerText = psCommand;
-            
-            const resultBox = document.getElementById('resultBox');
-            resultBox.classList.remove('hidden');
-            resultBox.classList.add('animate-[fadeIn_0.5s_ease-in-out]');
-            
-            setTimeout(() => {
-                resultBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }, 100);
+// ============================================================
+// Mode state
+// ============================================================
+let currentMode = 'new';   // 'new' | 'migrate'
+
+function setMode(mode) {
+    currentMode = mode;
+    document.getElementById('tab-new').classList.toggle('active',      mode === 'new');
+    document.getElementById('tab-migrate').classList.toggle('active',  mode === 'migrate');
+    document.getElementById('migrate-info').style.display = mode === 'migrate' ? 'flex' : 'none';
+    document.getElementById('btn-label').textContent =
+        mode === 'new' ? 'Generate Deployment Command' : 'Generate Migration Command';
+    // hide result when switching
+    document.getElementById('resultCard').classList.remove('visible');
+}
+
+// ============================================================
+// Validation
+// ============================================================
+function validate() {
+    const fields = ['bu','branch','province'];
+    let ok = true;
+    fields.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el.value.trim()) {
+            el.classList.add('shake');
+            el.addEventListener('animationend', () => el.classList.remove('shake'), { once: true });
+            ok = false;
         }
+    });
+    return ok;
+}
 
-        function copyToClipboard() {
-            const cmd = document.getElementById('cmdOutput').innerText;
-            
-            navigator.clipboard.writeText(cmd).then(() => {
-                showToast();
-                const copyBtn = document.getElementById('copyBtn');
-                const originalHTML = copyBtn.innerHTML;
-                copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Copied!';
-                copyBtn.classList.replace('bg-gray-800', 'bg-green-600');
-                copyBtn.classList.replace('border-gray-600', 'border-green-500');
-                
-                setTimeout(() => {
-                    copyBtn.innerHTML = originalHTML;
-                    copyBtn.classList.replace('bg-green-600', 'bg-gray-800');
-                    copyBtn.classList.replace('border-green-500', 'border-gray-600');
-                }, 2000);
-            }).catch(err => {
-                // Fallback สำหรับเครื่องที่ติดเรื่อง Clipboard Permissions
-                const textarea = document.createElement('textarea');
-                textarea.value = cmd;
-                document.body.appendChild(textarea);
-                textarea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textarea);
-                showToast();
-            });
-        }
+// ============================================================
+// Generate
+// ============================================================
+function generatePayload() {
+    if (!validate()) return;
 
-        function showToast() {
-            const toast = document.getElementById('toast');
-            toast.classList.remove('translate-y-20', 'opacity-0');
-            setTimeout(() => {
-                toast.classList.add('translate-y-20', 'opacity-0');
-            }, 3000);
-        }
-    </script>
+    const bu         = document.getElementById('bu').value;
+    const branch     = document.getElementById('branch').value.trim();
+    const deviceType = document.getElementById('deviceType').value;
+    const province   = document.getElementById('province').value;
+    const fullBranch = `${branch}-${deviceType}`;
+    const configJson = `{"BU":"${bu}","BranchID":"${fullBranch}","Province":"${province}"}`;
+
+    let cmd, steps, title, note;
+
+    if (currentMode === 'new') {
+        // ── NEW INSTALL ──
+        // 1. สร้างโฟลเดอร์ + เขียน Config
+        // 2. ดาวน์โหลด SAM_Scheduler, SAM_Agent, SAM_Update, smartctl
+        // 3. รัน SAM_Scheduler -Setup (ลง Tasks + ForceFullSync แรก)
+        title = 'New Install — v3.0.0';
+        steps = ['Create Config','Download 3 Scripts','Download smartctl','Setup Scheduler','Force FullSync'];
+        note  = 'Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง';
+
+        const psBlock = [
+            `New-Item -ItemType Directory -Force -Path 'C:\\IT_Support' | Out-Null`,
+            `Set-Content -Path 'C:\\IT_Support\\SystemConfig.json' -Value '${configJson.replace(/'/g,"\\'")}' -Encoding UTF8`,
+            `Invoke-WebRequest -Uri '${URLS.scheduler}' -OutFile 'C:\\IT_Support\\SAM_Scheduler.ps1' -UseBasicParsing`,
+            `Invoke-WebRequest -Uri '${URLS.agent}'     -OutFile 'C:\\IT_Support\\SAM_Agent.ps1'     -UseBasicParsing`,
+            `Invoke-WebRequest -Uri '${URLS.update}'    -OutFile 'C:\\IT_Support\\SAM_Update.ps1'    -UseBasicParsing`,
+            `Invoke-WebRequest -Uri '${URLS.smartctl}'  -OutFile 'C:\\IT_Support\\smartctl.exe'     -UseBasicParsing`,
+            `Start-Process powershell -ArgumentList '-WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\IT_Support\\SAM_Scheduler.ps1' -WindowStyle Hidden`
+        ].join('; ');
+
+        cmd = `powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command "${psBlock}"`;
+
+    } else {
+        // ── MIGRATE v2.2.4 → v3.0.0 ──
+        // วิธี A: มี internet บนเครื่อง → ดาวน์โหลด Migrate script แล้วรัน
+        // (เครื่องเก่ารับจาก C2 อีกช่องทางด้วย → RUN_TASK:SAM_Migrate_v224_to_v300.ps1)
+        title = 'Migrate v2.2.4 → v3.0.0';
+        steps = ['Download Migrate Script','Run as Admin','Auto Backup','Install v3 Tasks','Force FullSync'];
+        note  = `<b>วิธี A (รันตรง):</b> Copy คำสั่งนี้ไปรันใน CMD (Admin) บนเครื่องเป้าหมาย<br>
+                 <b>วิธี B (C2 Remote):</b> ใส่ใน Supabase RemoteCommand: <code style="color:#00e5ff">RUN_TASK:SAM_Migrate_v224_to_v300.ps1</code>`;
+
+        const psBlock = [
+            `$tmp = "$env:TEMP\\SAM_Migrate.ps1"`,
+            `Invoke-WebRequest -Uri '${URLS.migrate}' -OutFile $tmp -UseBasicParsing`,
+            `Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File $tmp" -Verb RunAs -Wait`,
+            `Remove-Item $tmp -Force -ErrorAction SilentlyContinue`
+        ].join('; ');
+
+        cmd = `powershell -ExecutionPolicy Bypass -Command "${psBlock}"`;
+    }
+
+    // Render
+    document.getElementById('result-title').textContent = title;
+    document.getElementById('note-text').innerHTML = note;
+    document.getElementById('cmdOutput').textContent = cmd;
+
+    // Step pills
+    const pillsEl = document.getElementById('stepPills');
+    pillsEl.innerHTML = steps.map(s => `<div class="step-pill">${s}</div>`).join('');
+
+    // Show result
+    const card = document.getElementById('resultCard');
+    card.classList.add('visible');
+    setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+
+    // Reset copy button
+    const copyBtn = document.getElementById('copyBtn');
+    copyBtn.classList.remove('copied');
+    copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy to Clipboard`;
+}
+
+// ============================================================
+// Copy
+// ============================================================
+function copyToClipboard() {
+    const cmd = document.getElementById('cmdOutput').textContent;
+    const copyBtn = document.getElementById('copyBtn');
+
+    const success = () => {
+        copyBtn.classList.add('copied');
+        copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Copied!`;
+        showToast();
+        setTimeout(() => {
+            copyBtn.classList.remove('copied');
+            copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy to Clipboard`;
+        }, 2500);
+    };
+
+    if (navigator.clipboard) {
+        navigator.clipboard.writeText(cmd).then(success).catch(() => fallbackCopy(cmd, success));
+    } else {
+        fallbackCopy(cmd, success);
+    }
+}
+
+function fallbackCopy(text, cb) {
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.style.cssText = 'position:fixed;opacity:0;';
+    document.body.appendChild(el);
+    el.select();
+    try { document.execCommand('copy'); cb(); } catch(e) {}
+    document.body.removeChild(el);
+}
+
+function showToast() {
+    const t = document.getElementById('toast');
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2800);
+}
+</script>
 </body>
 </html>
