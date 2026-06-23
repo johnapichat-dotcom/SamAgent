@@ -20,12 +20,12 @@ $WorkDir     = "C:\IT_Support"
 $LogFile     = "$WorkDir\SAM_Log.txt"
 
 # Remote URLs (GitHub RAW)
-$BaseRawUrl  = "https://raw.githubusercontent.com/johnapichat-dotcom/sam-agent-update/main"
+$BaseRawUrl  = "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent"
 $VersionUrl  = "$BaseRawUrl/version.txt"           # รูปแบบ: 3.0.1|sha256_agent|sha256_scheduler|sha256_update
 $AgentUrl    = "$BaseRawUrl/SAM_Agent.txt"         # ไฟล์จริง (นามสกุล .txt บน GitHub)
 $SchedulerUrl= "$BaseRawUrl/SAM_Scheduler.txt"
 $UpdateUrl   = "$BaseRawUrl/SAM_Update.txt"
-$SmartCtlUrl = "https://github.com/johnapichat-dotcom/sam-agent-update/releases/download/UpdateSAM/smartctl.exe"
+$SmartCtlUrl = "$BaseRawUrl/smartctl.exe"
 
 # Local paths
 $AgentScript     = "$WorkDir\SAM_Agent.ps1"

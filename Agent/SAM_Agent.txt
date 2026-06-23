@@ -24,7 +24,7 @@ $LogFile       = "$WorkDir\SAM_Log.txt"
 $StateFile     = "$WorkDir\LastState.json"   # { Hash, FieldHashes, LastFullSync, LastWriteTime }
 $ConfigFile    = "$WorkDir\SystemConfig.json"
 $SmartCtlPath  = "$WorkDir\smartctl.exe"
-$TaskBaseUrl   = "https://raw.githubusercontent.com/johnapichat-dotcom/sam-agent-update/main/task/"
+$TaskBaseUrl   = "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Task/"
 
 # Supabase
 $SupabaseUrl   = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices?on_conflict=SerialNumber"
