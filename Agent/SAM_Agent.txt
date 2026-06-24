@@ -370,7 +370,7 @@ try {
             $FwP  = Get-NetFirewallProfile -Name $Prof -ErrorAction SilentlyContinue
             if ($FwP.Enabled) { $FwSts += "$Prof (ON)" } else { $FwSts += "$Prof (OFF)"; $Secure = $false }
         }
-        $CloudFW = "$(if($Secure){"✅"}else{"❌"}) $($FwSts -join ', ')"
+        $CloudFW = "$(if($Secure){'✅'}else{'❌'}) $($FwSts -join ', ')"
     } else { $CloudFW = "Offline" }
 } catch { $CloudFW = "Scan Error" }
 
@@ -546,7 +546,7 @@ $CurrentData = [ordered]@{
     StabilityScore = $HealthScore
     Uptime         = $UptimeStr
     PendingReboot  = $PendingRb
-    TeamViewerID   = "$TV_ID$(if($TV_Ver){" (v$TV_Ver)"}else{""})"
+    TeamViewerID   = ('{0}{1}' -f $TV_ID, $(if($TV_Ver){ ' (v' + $TV_Ver + ')' }else{ '' }))
     AnyDeskID      = $AD_ID
     ActiveUsers    = $CloudUsers
     AllPrinters    = $CloudPrinters

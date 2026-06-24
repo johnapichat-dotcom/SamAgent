@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # S.A.M. SCHEDULER  (Smart Agent Management - Orchestrator)
 # VERSION     : 3.0.0
 # FILE        : SAM_Scheduler.ps1
@@ -194,7 +194,126 @@ function Install-SAMTasks {
         -Triggers    @($T5) `
         -Description "SAM: Rotate logs - keep 10 days"
 
+    # สร้าง Helper .bat files ทันทีหลัง Tasks ลง
+    New-SAMHelperFiles
     Write-SAMLog "=== All SAM Tasks installed successfully ==="
+}
+
+
+# ==========================================
+# CREATE HELPER .BAT FILES
+# ==========================================
+function New-SAMHelperFiles {
+    Write-SAMLog "Creating helper .bat files..."
+
+    $ForceSyncBat = @'
+@echo off
+color 0A
+title S.A.M. Force Full Sync
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b
+)
+cd /d C:\IT_Support
+if exist "LastState.json" del /q "LastState.json"
+echo Sending ForceFullSync to Supabase...
+powershell.exe -ExecutionPolicy Bypass -File "SAM_Agent.ps1" -ForceFullSync
+echo Done.
+pause
+exit
+'@
+
+    $DeepScanBat = @'
+@echo off
+color 0D
+title S.A.M. Deep Diagnostic Scan
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b
+)
+cd /d C:\IT_Support
+echo Running Deep Scan...
+powershell.exe -ExecutionPolicy Bypass -File "SAM_Agent.ps1" -DeepScan
+echo Done.
+pause
+exit
+'@
+
+    $UninstallBat = @'
+@echo off
+color 0C
+title S.A.M. Uninstaller
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    powershell -Command "Start-Process '%~dpnx0' -Verb RunAs"
+    exit /b
+)
+echo Removing S.A.M. Agent...
+powershell.exe -ExecutionPolicy Bypass -File "C:\IT_Support\SAM_Scheduler.ps1" -Uninstall
+echo Uninstall complete.
+pause
+exit
+'@
+
+    $UpdateCheckBat = @'
+@echo off
+color 0B
+title S.A.M. Force Update Check
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b
+)
+cd /d C:\IT_Support
+echo Checking for updates...
+powershell.exe -ExecutionPolicy Bypass -File "SAM_Update.ps1" -ForceCheck
+pause
+exit
+'@
+
+    $StatusBat = @'
+@echo off
+color 0E
+title S.A.M. Status
+cd /d C:\IT_Support
+powershell.exe -ExecutionPolicy Bypass -File "SAM_Scheduler.ps1" -Status
+pause
+exit
+'@
+
+    $C2PollBat = @'
+@echo off
+color 09
+title S.A.M. Manual C2 Poll
+cd /d C:\IT_Support
+echo Polling C2 command from Supabase...
+powershell.exe -ExecutionPolicy Bypass -File "SAM_Agent.ps1" -C2Only
+echo Done.
+pause
+exit
+'@
+
+    $BatFiles = @{
+        "SAM_ForceSync.bat"    = $ForceSyncBat
+        "SAM_DeepScan.bat"     = $DeepScanBat
+        "SAM_Uninstall.bat"    = $UninstallBat
+        "SAM_UpdateCheck.bat"  = $UpdateCheckBat
+        "SAM_Status.bat"       = $StatusBat
+        "SAM_C2Poll.bat"       = $C2PollBat
+    }
+
+    foreach ($BatName in $BatFiles.Keys) {
+        $BatPath = "$WorkDir\$BatName"
+        try {
+            [System.IO.File]::WriteAllText($BatPath, $BatFiles[$BatName], [System.Text.Encoding]::ASCII)
+            Write-SAMLog "Created: $BatName"
+        } catch {
+            Write-SAMLog "Failed to create $BatName : $($_.Exception.Message)" -Level "WARN"
+        }
+    }
+    Write-SAMLog "Helper .bat files ready."
 }
 
 # ==========================================
