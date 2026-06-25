@@ -448,26 +448,32 @@ if ($PSBoundParameters.ContainsKey('LogRotateOnly') -or ($args -contains "-LogRo
 if ($Status)    { Show-SAMStatus; exit 0 }
 if ($Uninstall) { Uninstall-SAM;  exit 0 }
 
-# Default / -Setup: ติดตั้งทุกอย่าง
+# ==========================================
+# ENTRY POINT
+# ==========================================
+# -Setup    → ติดตั้ง Tasks + .bat เท่านั้น (Portal Web ใช้ — Agent รันแยก)
+# (no flag) → ติดตั้ง Tasks + ล้าง state + รัน Agent -Silent ทันที (USB/manual)
+
 Invoke-FolderBootstrap
 Install-SAMTasks
 Write-SAMLog "SAM Scheduler v$SAM_VERSION setup complete."
 
-if (-not $Setup) {
-    # ติดตั้งใหม่ → ล้างข้อมูลเก่าทั้งหมดก่อน แล้วรัน Agent ทันที
-    Write-SAMLog "=== Initial Deploy: Clearing old state ==="
-
-    # ล้าง State เก่า → บังคับ FullSync
-    Remove-Item "$WorkDir\LastState.json"    -Force -ErrorAction SilentlyContinue
-    Remove-Item "$WorkDir\UpdateState.json"  -Force -ErrorAction SilentlyContinue
-    # ลบ HTML report เก่า
-    Get-ChildItem $WorkDir -Filter "*.html" | Remove-Item -Force -ErrorAction SilentlyContinue
-    Write-SAMLog "Old state cleared."
-
-    Write-SAMLog "Launching Agent -ForceFullSync (no jitter, foreground)..."
-    # ไม่ใช้ -Wait เพื่อให้ Scheduler จบได้ แต่ Agent รันทันที
-    Start-Process powershell.exe `
-        -ArgumentList "-ExecutionPolicy Bypass -File `"$AgentScript`" -ForceFullSync" `
-        -WindowStyle Normal
-    Write-SAMLog "Agent launched. Setup complete."
+if ($Setup) {
+    # Web Portal path: ลง tasks เสร็จแล้วออก
+    # Agent จะถูกรันแยกจาก CMD ด้วย -Silent -ForceFullSync
+    Write-SAMLog "Setup-only mode complete. Agent will be launched by caller."
+    exit 0
 }
+
+# USB / Manual path: ล้าง state เก่า + รัน Agent ทันทีแบบ Silent
+Write-SAMLog "=== Initial Deploy: Clearing old state ==="
+Remove-Item "$WorkDir\LastState.json"   -Force -ErrorAction SilentlyContinue
+Remove-Item "$WorkDir\UpdateState.json" -Force -ErrorAction SilentlyContinue
+Get-ChildItem $WorkDir -Filter "*.html"  | Remove-Item -Force -ErrorAction SilentlyContinue
+Write-SAMLog "Old state cleared."
+
+Write-SAMLog "Launching Agent -Silent -ForceFullSync..."
+Start-Process powershell.exe `
+    -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$AgentScript`" -Silent -ForceFullSync" `
+    -WindowStyle Hidden
+Write-SAMLog "Agent launched. Setup complete." 
