@@ -215,7 +215,9 @@ if %errorLevel% neq 0 (
 )
 cd /d C:\IT_Support
 if exist "LastState.json" del /q "LastState.json"
-powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "SAM_Agent.ps1" -Silent -ForceFullSync
+REM ไม่ใส่ -Silent เพื่อให้ GUI ขึ้นได้ถ้ายังไม่มี SystemConfig.json
+REM ถ้ามี Config แล้ว Agent จะรัน Silent เอง (UserInteractive check)
+powershell.exe -ExecutionPolicy Bypass -File "SAM_Agent.ps1" -ForceFullSync
 exit
 '@
 

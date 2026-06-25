@@ -168,7 +168,15 @@ if ($C2Only) {
 # INITIAL SETUP GUARD: ต้องมี Config ก่อน
 # ==========================================
 if (-not (Test-Path $ConfigFile)) {
-    if ($Silent) { exit 0 }
+    # ถ้าไม่มี Config:
+    # - Scheduled Task (SYSTEM, UserInteractive=false) → exit เงียบๆ
+    # - .bat / manual / ForceSync → เปิด GUI เสมอ แม้มี -Silent
+    if ($Silent -and ([Environment]::UserInteractive -eq $false)) {
+        Write-SAMLog "No config. Running as SYSTEM — cannot show GUI. Exit." -Level "WARN"
+        exit 0
+    }
+    # มี console หรือถูกเรียกจาก .bat → เปิด GUI
+    $Silent = $false   # บังคับ show GUI
 
     # GUI Setup
     Add-Type -AssemblyName System.Windows.Forms
