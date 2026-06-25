@@ -551,17 +551,23 @@ function generatePayload() {
         // 2. ดาวน์โหลด SAM_Scheduler, SAM_Agent, SAM_Update, smartctl
         // 3. รัน SAM_Scheduler -Setup (ลง Tasks + ForceFullSync แรก)
         title = 'New Install — v3.0.0';
-        steps = ['Create Config','Download 3 Scripts','Download smartctl','Setup Scheduler','Force FullSync'];
+        steps = ['Create Config','Download Files','Setup Tasks','ForceFullSync (Silent)','Done ✓'];
         note  = 'Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง';
 
         const psBlock = [
+            // Step 1: สร้างโฟลเดอร์
             `New-Item -ItemType Directory -Force -Path 'C:\\IT_Support' | Out-Null`,
+            // Step 2: เขียน Config จากข้อมูลที่กรอกบนเว็บ (UTF8 รองรับภาษาไทย)
             `[System.IO.File]::WriteAllText('C:\\IT_Support\\SystemConfig.json', '${configJson.replace(/'/g,"\\'")}', [System.Text.Encoding]::UTF8)`,
+            // Step 3: ดาวน์โหลด 3 scripts + smartctl
             `Invoke-WebRequest -Uri '${URLS.scheduler}' -OutFile 'C:\\IT_Support\\SAM_Scheduler.ps1' -UseBasicParsing`,
             `Invoke-WebRequest -Uri '${URLS.agent}'     -OutFile 'C:\\IT_Support\\SAM_Agent.ps1'     -UseBasicParsing`,
             `Invoke-WebRequest -Uri '${URLS.update}'    -OutFile 'C:\\IT_Support\\SAM_Update.ps1'    -UseBasicParsing`,
-            `Invoke-WebRequest -Uri '${URLS.smartctl}'  -OutFile 'C:\\IT_Support\\smartctl.exe'     -UseBasicParsing`,
-            `Start-Process powershell -ArgumentList '-WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\IT_Support\\SAM_Scheduler.ps1' -WindowStyle Hidden`
+            `Invoke-WebRequest -Uri '${URLS.smartctl}'  -OutFile 'C:\\IT_Support\\smartctl.exe'      -UseBasicParsing`,
+            // Step 4: ลง Scheduled Tasks (-Setup = ลง tasks อย่างเดียว ไม่รัน Agent)
+            `Start-Process powershell -ArgumentList '-WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\IT_Support\\SAM_Scheduler.ps1 -Setup' -WindowStyle Hidden -Wait`,
+            // Step 5: รัน Agent -Silent -ForceFullSync → ไม่เปิด GUI เด็ดขาด
+            `Start-Process powershell -ArgumentList '-WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\IT_Support\\SAM_Agent.ps1 -Silent -ForceFullSync' -WindowStyle Hidden`
         ].join('; ');
 
         cmd = `powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command "${psBlock}"`;
