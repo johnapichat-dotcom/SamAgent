@@ -554,18 +554,21 @@ function generatePayload() {
         steps = ['Create Config','Download Files','Setup Tasks','ForceFullSync (Silent)','Done ✓'];
         note  = 'Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง';
 
-        // สร้าง one-liner script ที่รันใน PowerShell session เดียว
-        // ไม่ใช้ Start-Process ซ้อน → ไม่มีปัญหา timing และ -Silent ส่งตรงเสมอ
-        const ps1 = `
-New-Item -ItemType Directory -Force -Path 'C:\\IT_Support' | Out-Null;
-[System.IO.File]::WriteAllText('C:\\IT_Support\\SystemConfig.json','${configJson.replace(/'/g,"\\'")}' ,[System.Text.Encoding]::UTF8);
-Invoke-WebRequest -Uri '${URLS.scheduler}' -OutFile 'C:\\IT_Support\\SAM_Scheduler.ps1' -UseBasicParsing;
-Invoke-WebRequest -Uri '${URLS.agent}'     -OutFile 'C:\\IT_Support\\SAM_Agent.ps1'     -UseBasicParsing;
-Invoke-WebRequest -Uri '${URLS.update}'    -OutFile 'C:\\IT_Support\\SAM_Update.ps1'    -UseBasicParsing;
-Invoke-WebRequest -Uri '${URLS.smartctl}'  -OutFile 'C:\\IT_Support\\smartctl.exe'      -UseBasicParsing;
-& 'C:\\IT_Support\\SAM_Scheduler.ps1' -Setup;
-& 'C:\\IT_Support\\SAM_Agent.ps1' -Silent -ForceFullSync
-`.trim().replace(/\n/g,' ');
+        // เขียน Config แยก field ด้วย ConvertTo-Json → ไม่มีปัญหา quote/escape
+        // ภาษาไทยใน Province ปลอดภัย 100% เพราะ PS จัดการ Unicode เอง
+        const ps1 = [
+            `$d='C:\\IT_Support'`,
+            `New-Item -ItemType Directory -Force -Path $d | Out-Null`,
+            // เขียน Config ด้วย hashtable → ConvertTo-Json → UTF8 (ไม่มี quote ซ้อน)
+            `$cfg=[ordered]@{BU='${bu}';BranchID='${fullBranch}';Province='${province}'}`,
+            `[System.IO.File]::WriteAllText("$d\\SystemConfig.json",($cfg|ConvertTo-Json),[System.Text.Encoding]::UTF8)`,
+            `Invoke-WebRequest -Uri '${URLS.scheduler}' -OutFile "$d\\SAM_Scheduler.ps1" -UseBasicParsing`,
+            `Invoke-WebRequest -Uri '${URLS.agent}'     -OutFile "$d\\SAM_Agent.ps1"     -UseBasicParsing`,
+            `Invoke-WebRequest -Uri '${URLS.update}'    -OutFile "$d\\SAM_Update.ps1"    -UseBasicParsing`,
+            `Invoke-WebRequest -Uri '${URLS.smartctl}'  -OutFile "$d\\smartctl.exe"      -UseBasicParsing`,
+            `& "$d\\SAM_Scheduler.ps1" -Setup`,
+            `& "$d\\SAM_Agent.ps1" -Silent -ForceFullSync`
+        ].join('; ');
 
         cmd = `powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command "${ps1}"`;
 
