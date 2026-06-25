@@ -258,9 +258,12 @@ try {
     $ConfigRaw = Get-Content $ConfigFile -Raw -Encoding UTF8 -ErrorAction Stop
     $Config    = $ConfigRaw | ConvertFrom-Json -ErrorAction Stop
 } catch {
-    Write-SAMLog "Config read error: $($_.Exception.Message) — re-running setup." -Level "ERROR"
+    Write-SAMLog "Config read error: $($_.Exception.Message)" -Level "ERROR"
     Remove-Item $ConfigFile -Force -ErrorAction SilentlyContinue
-    Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -NoNewWindow
+    if (-not $Silent) {
+        # Interactive mode: เปิด GUI ใหม่
+        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -NoNewWindow
+    }
     exit 0
 }
 $BU       = if ($Config.BU)       { $Config.BU }       else { "" }
@@ -269,11 +272,16 @@ $Province = if ($Config.Province) { $Config.Province } else { "N/A" }
 
 # Guard: ถ้า BU หรือ BranchID ว่าง แสดงว่า config เสีย
 if ([string]::IsNullOrWhiteSpace($BU) -or [string]::IsNullOrWhiteSpace($BranchID)) {
-    Write-SAMLog "Config missing BU/BranchID — clearing and re-launching setup." -Level "WARN"
-    Remove-Item $ConfigFile -Force -ErrorAction SilentlyContinue
-    if (-not $Silent) {
-        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -NoNewWindow
+    Write-SAMLog "Config missing BU/BranchID (BU='$BU' Branch='$BranchID')." -Level "WARN"
+    Write-SAMLog "Config content: $ConfigRaw" -Level "WARN"
+    if ($Silent) {
+        # Silent mode (Web/Task): ออกเงียบๆ ไม่เปิด GUI เด็ดขาด
+        Write-SAMLog "Silent mode — exiting without GUI." -Level "WARN"
+        exit 0
     }
+    # Interactive mode เท่านั้น: ลบ config แล้วเปิด GUI ใหม่
+    Remove-Item $ConfigFile -Force -ErrorAction SilentlyContinue
+    Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -NoNewWindow
     exit 0
 }
 Write-SAMLog "Config loaded: BU=$BU | Branch=$BranchID | Province=$Province"
