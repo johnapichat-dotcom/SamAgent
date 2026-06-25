@@ -254,10 +254,29 @@ if (-not (Test-Path $ConfigFile)) {
     if (-not $script:SavedOK) { exit 0 }
 }
 
-$Config   = Get-Content $ConfigFile -Raw | ConvertFrom-Json
-$BU       = $Config.BU
-$BranchID = $Config.BranchID
+try {
+    $ConfigRaw = Get-Content $ConfigFile -Raw -Encoding UTF8 -ErrorAction Stop
+    $Config    = $ConfigRaw | ConvertFrom-Json -ErrorAction Stop
+} catch {
+    Write-SAMLog "Config read error: $($_.Exception.Message) — re-running setup." -Level "ERROR"
+    Remove-Item $ConfigFile -Force -ErrorAction SilentlyContinue
+    Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -NoNewWindow
+    exit 0
+}
+$BU       = if ($Config.BU)       { $Config.BU }       else { "" }
+$BranchID = if ($Config.BranchID) { $Config.BranchID } else { "" }
 $Province = if ($Config.Province) { $Config.Province } else { "N/A" }
+
+# Guard: ถ้า BU หรือ BranchID ว่าง แสดงว่า config เสีย
+if ([string]::IsNullOrWhiteSpace($BU) -or [string]::IsNullOrWhiteSpace($BranchID)) {
+    Write-SAMLog "Config missing BU/BranchID — clearing and re-launching setup." -Level "WARN"
+    Remove-Item $ConfigFile -Force -ErrorAction SilentlyContinue
+    if (-not $Silent) {
+        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -NoNewWindow
+    }
+    exit 0
+}
+Write-SAMLog "Config loaded: BU=$BU | Branch=$BranchID | Province=$Province"
 
 # ==========================================
 # NETWORK CHECK (รอ Internet สูงสุด 2 ชม.)

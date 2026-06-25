@@ -317,55 +317,56 @@ exit
 }
 
 # ==========================================
-# LOG ROTATION — เก็บ 10 วัน
+# LOG ROTATION
 # ==========================================
-function Invoke-LogRotation {
-    $LogRetainDays = 10
-    $ArchiveDir    = "$WorkDir\LogArchive"
-
-    if (-not (Test-Path $ArchiveDir)) {
-        New-Item -ItemType Directory -Force -Path $ArchiveDir | Out-Null
-    }
-
-    # อ่าน Log file ทั้งหมด แยก line ตามวันที่
-    if (-not (Test-Path $LogFile)) { return }
-
+function Invoke-LogRotate-File {
+    param([string]$FilePath, [int]$RetainDays, [string]$Label)
+    if (-not (Test-Path $FilePath)) { return }
     try {
-        $CutoffDate = (Get-Date).AddDays(-$LogRetainDays)
-        $AllLines   = Get-Content $LogFile -Encoding UTF8 -ErrorAction Stop
-        $ValidLines = @()
-
-        foreach ($Line in $AllLines) {
-            # Parse timestamp จาก format: "yyyy-MM-dd HH:mm:ss"
-            if ($Line -match "^(\d{4}-\d{2}-\d{2})") {
-                try {
-                    $LineDate = [datetime]::ParseExact($Matches[1], "yyyy-MM-dd", $null)
-                    if ($LineDate -ge $CutoffDate) {
-                        $ValidLines += $Line
-                    }
-                } catch {
-                    $ValidLines += $Line  # เก็บ line ที่ parse วันไม่ได้ไว้
-                }
-            } else {
-                $ValidLines += $Line
-            }
+        $Cutoff   = (Get-Date).AddDays(-$RetainDays)
+        $AllLines = Get-Content $FilePath -Encoding UTF8 -ErrorAction Stop
+        $Kept     = $AllLines | Where-Object {
+            if ($_ -match "^(\d{4}-\d{2}-\d{2})") {
+                try { [datetime]::ParseExact($Matches[1],"yyyy-MM-dd",$null) -ge $Cutoff }
+                catch { $true }
+            } else { $true }
         }
-
-        # เขียนกลับ
-        $ValidLines | Out-File $LogFile -Encoding UTF8 -Force
-
-        Write-SAMLog "Log rotation complete. Kept $($ValidLines.Count) lines (>= $($CutoffDate.ToString('yyyy-MM-dd')))"
-
+        [System.IO.File]::WriteAllLines($FilePath, $Kept, [System.Text.Encoding]::UTF8)
+        Write-SAMLog "$Label rotation: kept $($Kept.Count)/$($AllLines.Count) lines (retain $RetainDays days, cutoff $($Cutoff.ToString('yyyy-MM-dd')))"
     } catch {
-        Write-SAMLog "Log rotation error: $($_.Exception.Message)" -Level "WARN"
+        Write-SAMLog "$Label rotation error: $($_.Exception.Message)" -Level "WARN"
     }
+}
 
-    # ลบ HTML Report เก่าเกิน 10 วัน
+function Invoke-LogRotation {
+    # SAM_Log.txt        — เก็บ 7 วัน  (operational log)
+    Invoke-LogRotate-File -FilePath $LogFile -RetainDays 7 -Label "SAM_Log"
+
+    # SAM_ChangeLog.txt  — เก็บ 15 วัน (data change events)
+    $ChangeLogFile = "$WorkDir\SAM_ChangeLog.txt"
+    Invoke-LogRotate-File -FilePath $ChangeLogFile -RetainDays 15 -Label "SAM_ChangeLog"
+
+    # SAM_Log_Offline.txt — เก็บ 7 วัน
+    $OfflineLog = "$WorkDir\SAM_Log_Offline.txt"
+    Invoke-LogRotate-File -FilePath $OfflineLog -RetainDays 7 -Label "SAM_Log_Offline"
+
+    # ลบ HTML Report เก่าเกิน 7 วัน
     try {
-        Get-ChildItem -Path $WorkDir -Filter "*.html" |
-            Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$LogRetainDays) } |
-            Remove-Item -Force -ErrorAction SilentlyContinue
-        Write-SAMLog "Old HTML reports cleaned up."
+        $OldHTML = Get-ChildItem -Path $WorkDir -Filter "*.html" -Recurse |
+            Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) }
+        $OldHTML | Remove-Item -Force -ErrorAction SilentlyContinue
+        if ($OldHTML.Count -gt 0) { Write-SAMLog "Removed $($OldHTML.Count) old HTML report(s)." }
+    } catch {}
+
+    # ลบ Offline JSON เก่าเกิน 15 วัน
+    try {
+        $OfflineRptDir = "$WorkDir\OfflineReports"
+        if (Test-Path $OfflineRptDir) {
+            $OldJSON = Get-ChildItem -Path $OfflineRptDir -Filter "*.json" |
+                Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-15) }
+            $OldJSON | Remove-Item -Force -ErrorAction SilentlyContinue
+            if ($OldJSON.Count -gt 0) { Write-SAMLog "Removed $($OldJSON.Count) old Offline JSON(s)." }
+        }
     } catch {}
 }
 
@@ -453,12 +454,20 @@ Install-SAMTasks
 Write-SAMLog "SAM Scheduler v$SAM_VERSION setup complete."
 
 if (-not $Setup) {
-    # ถ้าไม่ได้ผ่าน -Setup flag = ติดตั้งใหม่ → รัน Agent ทันที, ไม่รอ Jitter
-    Write-SAMLog "Initial deploy: launching Agent -ForceFullSync immediately (no jitter)..."
-    # ใช้ -Wait เพื่อให้ Scheduler รอจนกว่า Agent จะส่งข้อมูลสำเร็จก่อนออก
+    # ติดตั้งใหม่ → ล้างข้อมูลเก่าทั้งหมดก่อน แล้วรัน Agent ทันที
+    Write-SAMLog "=== Initial Deploy: Clearing old state ==="
+
+    # ล้าง State เก่า → บังคับ FullSync
+    Remove-Item "$WorkDir\LastState.json"    -Force -ErrorAction SilentlyContinue
+    Remove-Item "$WorkDir\UpdateState.json"  -Force -ErrorAction SilentlyContinue
+    # ลบ HTML report เก่า
+    Get-ChildItem $WorkDir -Filter "*.html" | Remove-Item -Force -ErrorAction SilentlyContinue
+    Write-SAMLog "Old state cleared."
+
+    Write-SAMLog "Launching Agent -ForceFullSync (no jitter, foreground)..."
+    # ไม่ใช้ -Wait เพื่อให้ Scheduler จบได้ แต่ Agent รันทันที
     Start-Process powershell.exe `
-        -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$AgentScript`" -ForceFullSync" `
-        -WindowStyle Hidden `
-        -Wait
-    Write-SAMLog "Initial ForceFullSync complete."
+        -ArgumentList "-ExecutionPolicy Bypass -File `"$AgentScript`" -ForceFullSync" `
+        -WindowStyle Normal
+    Write-SAMLog "Agent launched. Setup complete."
 }
