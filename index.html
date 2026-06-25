@@ -554,23 +554,37 @@ function generatePayload() {
         steps = ['Create Config','Download Files','Setup Tasks','ForceFullSync (Silent)','Done ✓'];
         note  = 'Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง';
 
-        // เขียน Config แยก field ด้วย ConvertTo-Json → ไม่มีปัญหา quote/escape
-        // ภาษาไทยใน Province ปลอดภัย 100% เพราะ PS จัดการ Unicode เอง
-        const ps1 = [
-            `$d='C:\\IT_Support'`,
-            `New-Item -ItemType Directory -Force -Path $d | Out-Null`,
-            // เขียน Config ด้วย hashtable → ConvertTo-Json → UTF8 (ไม่มี quote ซ้อน)
-            `$cfg=[ordered]@{BU='${bu}';BranchID='${fullBranch}';Province='${province}'}`,
-            `[System.IO.File]::WriteAllText("$d\\SystemConfig.json",($cfg|ConvertTo-Json),[System.Text.Encoding]::UTF8)`,
-            `Invoke-WebRequest -Uri '${URLS.scheduler}' -OutFile "$d\\SAM_Scheduler.ps1" -UseBasicParsing`,
-            `Invoke-WebRequest -Uri '${URLS.agent}'     -OutFile "$d\\SAM_Agent.ps1"     -UseBasicParsing`,
-            `Invoke-WebRequest -Uri '${URLS.update}'    -OutFile "$d\\SAM_Update.ps1"    -UseBasicParsing`,
-            `Invoke-WebRequest -Uri '${URLS.smartctl}'  -OutFile "$d\\smartctl.exe"      -UseBasicParsing`,
-            `& "$d\\SAM_Scheduler.ps1" -Setup`,
-            `& "$d\\SAM_Agent.ps1" -Silent -ForceFullSync`
-        ].join('; ');
+        // ใช้ -EncodedCommand (UTF-16LE Base64) → ไม่มี quote/escape ปัญหาเลย
+        // ทั้ง CMD และ PS รัน script ที่ encode แล้วโดยตรง
+        function toPSEncoded(script) {
+            // PowerShell -EncodedCommand ต้องการ UTF-16LE Base64
+            const buf = new ArrayBuffer(script.length * 2);
+            const view = new DataView(buf);
+            for (let i = 0; i < script.length; i++) {
+                view.setUint16(i * 2, script.charCodeAt(i), true);
+            }
+            const bytes = new Uint8Array(buf);
+            let bin = '';
+            for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+            return btoa(bin);
+        }
 
-        cmd = `powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command "${ps1}"`;
+        const scriptLines = [
+            `$d = 'C:\\IT_Support'`,
+            `New-Item -ItemType Directory -Force -Path $d | Out-Null`,
+            `$cfg = [ordered]@{ BU = '${bu}'; BranchID = '${fullBranch}'; Province = '${province}' }`,
+            `$json = $cfg | ConvertTo-Json`,
+            `[System.IO.File]::WriteAllText(($d + '\\SystemConfig.json'), $json, [System.Text.Encoding]::UTF8)`,
+            `Invoke-WebRequest -Uri '${URLS.scheduler}' -OutFile ($d + '\\SAM_Scheduler.ps1') -UseBasicParsing`,
+            `Invoke-WebRequest -Uri '${URLS.agent}'     -OutFile ($d + '\\SAM_Agent.ps1')     -UseBasicParsing`,
+            `Invoke-WebRequest -Uri '${URLS.update}'    -OutFile ($d + '\\SAM_Update.ps1')    -UseBasicParsing`,
+            `Invoke-WebRequest -Uri '${URLS.smartctl}'  -OutFile ($d + '\\smartctl.exe')      -UseBasicParsing`,
+            `& ($d + '\\SAM_Scheduler.ps1') -Setup`,
+            `& ($d + '\\SAM_Agent.ps1') -Silent -ForceFullSync`
+        ].join('\n');
+
+        const encoded = toPSEncoded(scriptLines);
+        cmd = `powershell -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
 
     } else {
         // ── MIGRATE v2.2.4 → v3.0.0 ──
