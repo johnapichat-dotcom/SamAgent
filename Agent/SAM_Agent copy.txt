@@ -245,30 +245,13 @@ if (-not (Test-Path $ConfigFile)) {
             BranchID = "$($txtBranch.Text.Trim())-$($comboType.Text)"
             Province = $comboProv.Text
         }
-        # เขียน Config ด้วย UTF8 รองรับภาษาไทย
-        try {
-            [System.IO.File]::WriteAllText($ConfigFile, ($cfg | ConvertTo-Json), [System.Text.Encoding]::UTF8)
-        } catch {}
-
-        # แสดง feedback แล้วปิด form → script ดำเนินต่อทันที ไม่ต้องรันใหม่
-        $btnSave.Text      = "กำลังทำงาน..."
-        $btnSave.Enabled   = $false
-        $btnSave.BackColor = [System.Drawing.Color]::FromArgb(0,160,80)
-        [System.Windows.Forms.Application]::DoEvents()
-        Start-Sleep -Milliseconds 600
-
+        try { $cfg | ConvertTo-Json | Out-File $ConfigFile -Encoding UTF8 } catch {}
         $script:SavedOK = $true
         $form.Close()
     })
     $form.TopMost = $true
     $form.ShowDialog() | Out-Null
-
-    # ถ้าปิด form โดยไม่กด Save → ออก
     if (-not $script:SavedOK) { exit 0 }
-
-    # กด Save แล้ว → อ่าน Config ที่เพิ่งบันทึก แล้วดำเนินต่อทันที (ไม่ re-launch)
-    Write-SAMLog "Config saved via GUI. Continuing in same process..."
-    $Silent = $true   # ซ่อน console หลังจาก GUI ปิด
 }
 
 try {
