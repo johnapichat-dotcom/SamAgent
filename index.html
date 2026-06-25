@@ -554,23 +554,20 @@ function generatePayload() {
         steps = ['Create Config','Download Files','Setup Tasks','ForceFullSync (Silent)','Done ✓'];
         note  = 'Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง';
 
-        const psBlock = [
-            // Step 1: สร้างโฟลเดอร์
-            `New-Item -ItemType Directory -Force -Path 'C:\\IT_Support' | Out-Null`,
-            // Step 2: เขียน Config จากข้อมูลที่กรอกบนเว็บ (UTF8 รองรับภาษาไทย)
-            `[System.IO.File]::WriteAllText('C:\\IT_Support\\SystemConfig.json', '${configJson.replace(/'/g,"\\'")}', [System.Text.Encoding]::UTF8)`,
-            // Step 3: ดาวน์โหลด 3 scripts + smartctl
-            `Invoke-WebRequest -Uri '${URLS.scheduler}' -OutFile 'C:\\IT_Support\\SAM_Scheduler.ps1' -UseBasicParsing`,
-            `Invoke-WebRequest -Uri '${URLS.agent}'     -OutFile 'C:\\IT_Support\\SAM_Agent.ps1'     -UseBasicParsing`,
-            `Invoke-WebRequest -Uri '${URLS.update}'    -OutFile 'C:\\IT_Support\\SAM_Update.ps1'    -UseBasicParsing`,
-            `Invoke-WebRequest -Uri '${URLS.smartctl}'  -OutFile 'C:\\IT_Support\\smartctl.exe'      -UseBasicParsing`,
-            // Step 4: ลง Scheduled Tasks (-Setup = ลง tasks อย่างเดียว ไม่รัน Agent)
-            `Start-Process powershell -ArgumentList '-WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\IT_Support\\SAM_Scheduler.ps1 -Setup' -WindowStyle Hidden -Wait`,
-            // Step 5: รัน Agent -Silent -ForceFullSync → ไม่เปิด GUI เด็ดขาด
-            `Start-Process powershell -ArgumentList '-WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\IT_Support\\SAM_Agent.ps1 -Silent -ForceFullSync' -WindowStyle Hidden`
-        ].join('; ');
+        // สร้าง one-liner script ที่รันใน PowerShell session เดียว
+        // ไม่ใช้ Start-Process ซ้อน → ไม่มีปัญหา timing และ -Silent ส่งตรงเสมอ
+        const ps1 = `
+New-Item -ItemType Directory -Force -Path 'C:\\IT_Support' | Out-Null;
+[System.IO.File]::WriteAllText('C:\\IT_Support\\SystemConfig.json','${configJson.replace(/'/g,"\\'")}' ,[System.Text.Encoding]::UTF8);
+Invoke-WebRequest -Uri '${URLS.scheduler}' -OutFile 'C:\\IT_Support\\SAM_Scheduler.ps1' -UseBasicParsing;
+Invoke-WebRequest -Uri '${URLS.agent}'     -OutFile 'C:\\IT_Support\\SAM_Agent.ps1'     -UseBasicParsing;
+Invoke-WebRequest -Uri '${URLS.update}'    -OutFile 'C:\\IT_Support\\SAM_Update.ps1'    -UseBasicParsing;
+Invoke-WebRequest -Uri '${URLS.smartctl}'  -OutFile 'C:\\IT_Support\\smartctl.exe'      -UseBasicParsing;
+& 'C:\\IT_Support\\SAM_Scheduler.ps1' -Setup;
+& 'C:\\IT_Support\\SAM_Agent.ps1' -Silent -ForceFullSync
+`.trim().replace(/\n/g,' ');
 
-        cmd = `powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command "${psBlock}"`;
+        cmd = `powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command "${ps1}"`;
 
     } else {
         // ── MIGRATE v2.2.4 → v3.0.0 ──
