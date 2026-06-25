@@ -556,7 +556,7 @@ function generatePayload() {
 
         const psBlock = [
             `New-Item -ItemType Directory -Force -Path 'C:\\IT_Support' | Out-Null`,
-            `Set-Content -Path 'C:\\IT_Support\\SystemConfig.json' -Value '${configJson.replace(/'/g,"\\'")}' -Encoding UTF8`,
+            `[System.IO.File]::WriteAllText('C:\\IT_Support\\SystemConfig.json', '${configJson.replace(/'/g,"\\'")}', [System.Text.Encoding]::UTF8)`,
             `Invoke-WebRequest -Uri '${URLS.scheduler}' -OutFile 'C:\\IT_Support\\SAM_Scheduler.ps1' -UseBasicParsing`,
             `Invoke-WebRequest -Uri '${URLS.agent}'     -OutFile 'C:\\IT_Support\\SAM_Agent.ps1'     -UseBasicParsing`,
             `Invoke-WebRequest -Uri '${URLS.update}'    -OutFile 'C:\\IT_Support\\SAM_Update.ps1'    -UseBasicParsing`,
