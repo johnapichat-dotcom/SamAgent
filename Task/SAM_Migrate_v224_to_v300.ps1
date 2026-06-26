@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # S.A.M. MIGRATION SCRIPT
 # FROM    : v2.2.4 (Single-file SAM_Agent.ps1 / JARVIS legacy)
 # TO      : v3.0.0 (SAM_Scheduler + SAM_Agent + SAM_Update)
@@ -242,7 +242,9 @@ if (-not $NetOK) {
     if (Test-Path $OldAgent) {
         try {
             $Action   = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$OldAgent`" -Silent"
-            $Trigger  = @(New-ScheduledTaskTrigger -AtStartup, (New-ScheduledTaskTrigger -Once -At "8:00AM" -RepetitionInterval (New-TimeSpan -Hours 2)))
+            $TriggerA = New-ScheduledTaskTrigger -AtStartup
+            $TriggerB = New-ScheduledTaskTrigger -Once -At "8:00AM" -RepetitionInterval (New-TimeSpan -Hours 2)
+            $Trigger  = @($TriggerA, $TriggerB)
             $Settings = New-ScheduledTaskSettingsSet -RunOnlyIfNetworkAvailable -StartWhenAvailable -AllowStartIfOnBatteries
             Register-ScheduledTask -TaskName "SAM_Agent_DailySync" -Action $Action -Trigger $Trigger -Settings $Settings -User "NT AUTHORITY\SYSTEM" -RunLevel Highest -Force | Out-Null
             Write-MigLog "Rollback: Legacy task restored." -Level "WARN"
@@ -403,7 +405,8 @@ $AllOK = ($MissingTasks.Count -eq 0) -and ($FailedDL -eq 0)
 $Status = if ($AllOK) { "SUCCESS" } else { "PARTIAL" }
 
 Write-MigLog "Migration Status    : $Status"
-Write-MigLog "Files downloaded    : $($DLResults.Values | Where-Object { $_ }).Count / $($DLResults.Count)"
+$DLSuccess = ($DLResults.Values | Where-Object { $_ -eq $true }).Count
+    Write-MigLog "Files downloaded    : $DLSuccess / $($DLResults.Count)"
 Write-MigLog "Tasks installed     : $($NewTasks.Count - $MissingTasks.Count) / $($NewTasks.Count)"
 Write-MigLog "Config preserved    : $(if ($ExistingConfig) { 'YES' } else { 'NO (fresh setup on next run)' })"
 Write-MigLog "Backup location     : $BackupDir"
@@ -429,3 +432,37 @@ if ($AllOK) {
 Write-MigLog ""
 Write-MigLog "Migration log saved: $MigLogFile"
 Write-MigLog $("=" * 60)
+
+# Acknowledge C2 Command → เปลี่ยน RemoteCommand เป็น DONE
+try {
+    $SupabaseUrl = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices"
+    $RawKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhhYnZoZm9vc21xeXJia29obW9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3NDg2NDAsImV4cCI6MjA5MzMyNDY0MH0.12i8J50IPfEkTcq7xFJz54rA4MLARcHOsTtibi1iG2s"
+    $SupabaseKey = $RawKey -replace "\s+",""
+
+    # หา SerialNumber ของเครื่องนี้
+    $BIOS = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+    $RawSN = if ($BIOS.SerialNumber) { $BIOS.SerialNumber.Trim() } else { "" }
+    if ([string]::IsNullOrWhiteSpace($RawSN) -or $RawSN -match "(?i)To be filled|O\.E\.M\.|Default|None") {
+        $UUID = (Get-CimInstance Win32_ComputerSystemProduct).UUID
+        $SafeSerial = "HWID-" + ($UUID.Substring(0,18))
+    } else { $SafeSerial = $RawSN }
+
+    # ดึง row id
+    $GetUrl = "$SupabaseUrl?SerialNumber=eq.$([uri]::EscapeDataString($SafeSerial))&select=id"
+    $Headers = @{ "apikey"=$SupabaseKey; "Authorization"="Bearer $SupabaseKey" }
+    $Row = Invoke-RestMethod -Uri $GetUrl -Headers $Headers -TimeoutSec 10 -ErrorAction Stop
+
+    if ($Row -and $Row.Count -gt 0) {
+        $RowId = $Row[0].id
+        $PatchUrl = "$SupabaseUrl?id=eq.$RowId"
+        $PatchBody = @{ RemoteCommand = "DONE" } | ConvertTo-Json -Compress
+        $PatchHeaders = @{
+            "apikey"=$SupabaseKey; "Authorization"="Bearer $SupabaseKey"
+            "Content-Type"="application/json"; "Prefer"="return=minimal"
+        }
+        Invoke-RestMethod -Uri $PatchUrl -Method Patch -Headers $PatchHeaders -Body $PatchBody -TimeoutSec 10 | Out-Null
+        Write-MigLog "C2 Acknowledged: RemoteCommand → DONE" -Level "OK"
+    }
+} catch {
+    Write-MigLog "C2 Acknowledge failed (non-critical): $($_.Exception.Message)" -Level "WARN"
+}
