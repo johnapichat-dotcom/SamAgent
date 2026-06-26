@@ -364,13 +364,14 @@
         <div id="migrate-info" class="info-box" style="display:none">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             <span>
-                คำสั่งนี้จะส่ง Migration Script ผ่าน C2 ไปยังเครื่องที่ติดตั้ง v2.2.4 อยู่<br>
-                เครื่องจะ Backup ข้อมูลเดิม → ดาวน์โหลด v3.0.0 ทั้ง 3 ไฟล์ → ลง Tasks ใหม่ → FullSync อัตโนมัติ<br>
-                <b>ไม่ต้องเข้าเครื่อง</b> — รอผลใน Supabase Dashboard
+                สำหรับเครื่องที่ติดตั้ง <b>v2.2.4</b> อยู่แล้ว — ไม่ต้องกรอกข้อมูลใหม่<br>
+                Script จะดึง Config เดิมจากเครื่อง (BU / Branch / Province) มาใช้ต่อทันที<br>
+                Backup อัตโนมัติ → อัปเกรด v3.0.0 → FullSync → <b>จบใน CMD เดียว</b>
             </span>
         </div>
 
         <!-- ── FORM ── -->
+        <div id="form-fields">
         <div class="sec-label">Device Configuration</div>
 
         <!-- BU -->
@@ -438,6 +439,8 @@
                 <option>อุบลราชธานี</option>
             </select>
         </div>
+
+        </div><!-- /form-fields -->
 
         <!-- Generate Button -->
         <button class="btn-generate" onclick="generatePayload()">
@@ -507,9 +510,13 @@ function setMode(mode) {
     document.getElementById('tab-new').classList.toggle('active',      mode === 'new');
     document.getElementById('tab-migrate').classList.toggle('active',  mode === 'migrate');
     document.getElementById('migrate-info').style.display = mode === 'migrate' ? 'flex' : 'none';
+
+    // ซ่อน form fields ใน Migrate mode — ไม่ต้องกรอกข้อมูลเลย
+    const formFields = document.getElementById('form-fields');
+    formFields.style.display = mode === 'migrate' ? 'none' : 'block';
+
     document.getElementById('btn-label').textContent =
         mode === 'new' ? 'Generate Deployment Command' : 'Generate Migration Command';
-    // hide result when switching
     document.getElementById('resultCard').classList.remove('visible');
 }
 
@@ -517,6 +524,7 @@ function setMode(mode) {
 // Validation
 // ============================================================
 function validate() {
+    if (currentMode === 'migrate') return true;  // migrate ไม่ต้องกรอกอะไร
     const fields = ['bu','branch','province'];
     let ok = true;
     fields.forEach(id => {
