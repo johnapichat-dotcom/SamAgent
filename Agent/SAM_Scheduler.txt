@@ -133,7 +133,7 @@ function Install-SAMTasks {
     $T1_Startup = New-ScheduledTaskTrigger -AtStartup
     $T1_Repeat  = New-ScheduledTaskTrigger -Once -At "00:00AM" `
                       -RepetitionInterval (New-TimeSpan -Hours 2) `
-                      -RepetitionDuration ([TimeSpan]::MaxValue)
+                      -RepetitionDuration (New-TimeSpan -Days 9999)
     Register-SAMTask `
         -TaskName    $TASK_AGENT_SYNC `
         -ScriptFile  $AgentScript `
@@ -468,4 +468,4 @@ Write-SAMLog "Launching Agent -Silent -ForceFullSync..."
 Start-Process powershell.exe `
     -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$AgentScript`" -Silent -ForceFullSync" `
     -WindowStyle Hidden
-Write-SAMLog "Agent launched. Setup complete."
+Write-SAMLog "Agent launched. Setup complete." 
