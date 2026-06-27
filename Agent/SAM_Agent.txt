@@ -313,16 +313,19 @@ if ([string]::IsNullOrWhiteSpace($BU) -or [string]::IsNullOrWhiteSpace($BranchID
 }
 Write-SAMLog "Config loaded: BU=$BU | Branch=$BranchID | Province=$Province"
 
-# แยก DeviceType และ BranchName จาก BranchID (format: "ชื่อสาขา-DeviceType")
-# เช่น "ท่าปลา1-PC" → BranchName="ท่าปลา1", DeviceType="PC"
-$DeviceType = ""
-# Backward compatible: Config ใหม่ = BranchID แค่ชื่อสาขา + DeviceType แยก
-# Config เก่า = BranchID รวม เช่น "ServerLP-PC" → parse แยก
+# BranchName = BranchID (ชื่อสาขาล้วนๆ)
+# DeviceType  = อ่านจาก Config โดยตรง (Config ใหม่)
+# Backward: ถ้า Config เก่าไม่มี DeviceType แต่ BranchID มี "-" → parse
 $BranchName = $BranchID
-if ([string]::IsNullOrWhiteSpace($DeviceType) -and $BranchID -match "^(.+)-([^-]+)$") {
-    $BranchName = $Matches[1]
-    $DeviceType = $Matches[2]
-    Write-SAMLog "Legacy BranchID parsed: BranchName=$BranchName DeviceType=$DeviceType" -Level "INFO"
+if ([string]::IsNullOrWhiteSpace($DeviceType)) {
+    # Config เก่า: ลอง parse จาก BranchID เช่น "ServerLP-PC" → "ServerLP" + "PC"
+    if ($BranchID -match "^(.+)-([^-]+)$") {
+        $BranchName = $Matches[1]
+        $DeviceType = $Matches[2]
+        Write-SAMLog "Legacy BranchID parsed: BranchName=$BranchName DeviceType=$DeviceType" -Level "INFO"
+    } else {
+        Write-SAMLog "DeviceType not set (no dash in BranchID=$BranchID)" -Level "WARN"
+    }
 } else {
     Write-SAMLog "Config: BranchName=$BranchName DeviceType=$DeviceType"
 }
@@ -659,7 +662,7 @@ $CurrentData = [ordered]@{
     StabilityScore = $HealthScore
     Uptime         = $UptimeStr
     PendingReboot  = $PendingRb
-    TeamViewerID   = ('{0}{1}' -f $TV_ID, $(if($TV_Ver){ ' (v' + $TV_Ver + ')' }else{ '' }))
+    TeamViewerID   = $TV_ID   # แค่ ID ไม่แสดง version
     AnyDeskID      = $AD_ID
     ActiveUsers    = $CloudUsers
     AllPrinters    = $CloudPrinters
