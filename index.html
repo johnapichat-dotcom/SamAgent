@@ -588,7 +588,7 @@ function generatePayload() {
         // 2. ดาวน์โหลด SAM_Scheduler, SAM_Agent, SAM_Update, smartctl
         // 3. รัน SAM_Scheduler -Setup (ลง Tasks + ForceFullSync แรก)
         title = 'New Install — v3.0.0';
-        steps = ['Create Config','Download Files','Setup Tasks','ForceFullSync (Silent)','Done ✓'];
+        steps = ['Create Config (BranchID='+branch+' Type='+deviceType+')', 'Download Files', 'Setup Tasks', 'ForceFullSync', 'Done ✓'];
         note  = 'Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง';
 
         // ใช้ -EncodedCommand (UTF-16LE Base64) → ไม่มี quote/escape ปัญหาเลย
@@ -609,7 +609,7 @@ function generatePayload() {
         const scriptLines = [
             `$d = 'C:\\IT_Support'`,
             `New-Item -ItemType Directory -Force -Path $d | Out-Null`,
-            `$cfg = [ordered]@{ BU = '${bu}'; BranchID = '${fullBranch}'; Province = '${province}' }`,
+            `$cfg = [ordered]@{ BU = '${bu}'; BranchID = '${branch}'; DeviceType = '${deviceType}'; Province = '${province}' }`,
             `$json = $cfg | ConvertTo-Json`,
             `[System.IO.File]::WriteAllText(($d + '\\SystemConfig.json'), $json, [System.Text.Encoding]::UTF8)`,
             `Invoke-WebRequest -Uri '${URLS.scheduler}' -OutFile ($d + '\\SAM_Scheduler.ps1') -UseBasicParsing`,

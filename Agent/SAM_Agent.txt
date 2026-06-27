@@ -249,9 +249,10 @@ if (-not (Test-Path $ConfigFile)) {
             return
         }
         $cfg = @{
-            BU       = $comboBU.Text
-            BranchID = "$($txtBranch.Text.Trim())-$($comboType.Text)"
-            Province = $comboProv.Text
+            BU         = $comboBU.Text
+            BranchID   = $txtBranch.Text.Trim()   # ชื่อสาขาล้วนๆ ไม่มี DeviceType
+            DeviceType = $comboType.Text           # แยกเก็บ
+            Province   = $comboProv.Text
         }
         # เขียน Config ด้วย UTF8 รองรับภาษาไทย
         try {
@@ -291,9 +292,10 @@ try {
     }
     exit 0
 }
-$BU       = if ($Config.BU)       { $Config.BU }       else { "" }
-$BranchID = if ($Config.BranchID) { $Config.BranchID } else { "" }
-$Province = if ($Config.Province) { $Config.Province } else { "N/A" }
+$BU         = if ($Config.BU)         { $Config.BU }         else { "" }
+$BranchID   = if ($Config.BranchID)   { $Config.BranchID }   else { "" }
+$Province   = if ($Config.Province)   { $Config.Province }   else { "N/A" }
+$DeviceType = if ($Config.DeviceType) { $Config.DeviceType } else { "" }
 
 # Guard: ถ้า BU หรือ BranchID ว่าง แสดงว่า config เสีย
 if ([string]::IsNullOrWhiteSpace($BU) -or [string]::IsNullOrWhiteSpace($BranchID)) {
@@ -314,10 +316,15 @@ Write-SAMLog "Config loaded: BU=$BU | Branch=$BranchID | Province=$Province"
 # แยก DeviceType และ BranchName จาก BranchID (format: "ชื่อสาขา-DeviceType")
 # เช่น "ท่าปลา1-PC" → BranchName="ท่าปลา1", DeviceType="PC"
 $DeviceType = ""
+# Backward compatible: Config ใหม่ = BranchID แค่ชื่อสาขา + DeviceType แยก
+# Config เก่า = BranchID รวม เช่น "ServerLP-PC" → parse แยก
 $BranchName = $BranchID
-if ($BranchID -match "^(.+)-([^-]+)$") {
+if ([string]::IsNullOrWhiteSpace($DeviceType) -and $BranchID -match "^(.+)-([^-]+)$") {
     $BranchName = $Matches[1]
     $DeviceType = $Matches[2]
+    Write-SAMLog "Legacy BranchID parsed: BranchName=$BranchName DeviceType=$DeviceType" -Level "INFO"
+} else {
+    Write-SAMLog "Config: BranchName=$BranchName DeviceType=$DeviceType"
 }
 
 # ==========================================
@@ -473,32 +480,24 @@ function Get-AVVersion {
         }
         # Trend Micro Apex One / OfficeScan
         if ($AVName -match "Trend Micro|Apex One|OfficeScan|PC-cillin") {
-            $TMPaths = @(
-                "HKLM:\SOFTWARE\TrendMicro\PC-cillinNTCorp\CurrentVersion",
-                "HKLM:\SOFTWARE\WOW6432Node\TrendMicro\PC-cillinNTCorp\CurrentVersion",
-                "HKLM:\SOFTWARE\TrendMicro\UniClient\UacSdk",
-                "HKLM:\SOFTWARE\WOW6432Node\TrendMicro\UniClient\UacSdk"
+            $tmExeList = @(
+                "$env:ProgramFiles\Trend Micro\Security Agent\Ntrtscan.exe",
+                "${env:ProgramFiles(x86)}\Trend Micro\Security Agent\Ntrtscan.exe",
+                "$env:ProgramFiles\Trend Micro\Apex One Security Agent\Ntrtscan.exe",
+                "${env:ProgramFiles(x86)}\Trend Micro\OfficeScan Client\Ntrtscan.exe"
             )
-            foreach ($p in $TMPaths) {
-                if (Test-Path $p) {
-                    $reg = Get-ItemProperty $p -ErrorAction SilentlyContinue
-                    $ver = if ($reg.ProgramVer)    { $reg.ProgramVer } `
-                      elseif ($reg.ServicePack)    { $reg.ServicePack } `
-                      elseif ($reg.AgentVersion)   { $reg.AgentVersion } `
-                      else { $null }
-                    if ($ver) { return $ver }
+            $tmExe = $tmExeList | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if ($tmExe) {
+                $rawVer = (Get-Item $tmExe -ErrorAction SilentlyContinue).VersionInfo.FileVersion
+                if ($rawVer) {
+                    return ($rawVer -replace '^(\d+\.\d+)\.0\.(\d+)$','$1.$2')
                 }
             }
-            # fallback: ดึงจาก exe version
-            $exePaths = @(
-                "$env:ProgramFiles\Trend Micro\Security Agent\TMASEngine.exe",
-                "$env:ProgramFiles(x86)\Trend Micro\OfficeScan Client\TmListen.exe",
-                "$env:ProgramFiles\Trend Micro\Apex One Security Agent\TMASEngine.exe"
-            )
-            foreach ($exe in $exePaths) {
-                if (Test-Path $exe) {
-                    $v = (Get-Item $exe -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
-                    if ($v) { return $v }
+            foreach ($p in @("HKLM:\SOFTWARE\TrendMicro\PC-cillinNTCorp\CurrentVersion","HKLM:\SOFTWARE\WOW6432Node\TrendMicro\PC-cillinNTCorp\CurrentVersion")) {
+                if (Test-Path $p) {
+                    $reg = Get-ItemProperty $p -ErrorAction SilentlyContinue
+                    $ver = if ($reg.ProgramVer) { $reg.ProgramVer } elseif ($reg.AgentVersion) { $reg.AgentVersion } else { $null }
+                    if ($ver) { return $ver }
                 }
             }
         }
@@ -635,7 +634,7 @@ $NowTH   = $NowUTC.AddHours(7)
 
 $CurrentData = [ordered]@{
     BU             = $BU
-    BranchID       = $BranchID
+    BranchID       = $BranchName    # ส่งแค่ชื่อสาขา (ไม่มี -DeviceType)
     BranchName     = $BranchName
     DeviceType     = $DeviceType
     Province       = $Province
