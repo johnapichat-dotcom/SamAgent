@@ -474,35 +474,6 @@
         </button>
     </div>
 
-    <!-- SQL Setup Card -->
-    <div class="card" style="max-width:580px" id="sqlCard">
-        <div class="sec-label">Supabase SQL — เพิ่ม Column ใหม่</div>
-        <p style="font-size:.75rem;color:#64748b;margin:0 0 .8rem">รัน SQL นี้ใน Supabase SQL Editor ครั้งเดียว เพื่อเพิ่ม column BranchName และ DeviceType</p>
-        <div style="background:#080808;border:1px solid #1e1e1e;border-radius:8px;padding:.9rem 1rem;font-family:Consolas,monospace;font-size:.72rem;color:#4ade80;white-space:pre-wrap;line-height:1.7" id="sqlOutput">-- 1. เพิ่ม column ใหม่
-ALTER TABLE sam_devices ADD COLUMN IF NOT EXISTS "BranchName" text;
-ALTER TABLE sam_devices ADD COLUMN IF NOT EXISTS "DeviceType" text;
-
--- 2. Migrate ข้อมูลเดิม: แยก DeviceType และ BranchName จาก BranchID
--- เช่น "ท่าปลา1-PC" → BranchName="ท่าปลา1", DeviceType="PC"
-UPDATE sam_devices
-SET
-  "BranchName" = CASE
-    WHEN "BranchID" LIKE '%-%'
-    THEN LEFT("BranchID", LENGTH("BranchID") - LENGTH(SPLIT_PART("BranchID", '-', -1)) - 1)
-    ELSE "BranchID"
-  END,
-  "DeviceType" = CASE
-    WHEN "BranchID" LIKE '%-%'
-    THEN SPLIT_PART("BranchID", '-', -1)
-    ELSE ''
-  END
-WHERE "BranchID" IS NOT NULL AND "BranchID" != '';</div>
-        <button onclick="copySQL()" id="sqlBtn" class="btn-copy" style="margin-top:.7rem">
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-            Copy SQL
-        </button>
-    </div>
-
     <!-- Footer -->
     <div class="footer">
         <div>S.A.M. Web Provisioning Portal · v3.0.0 Enterprise</div>
@@ -665,22 +636,6 @@ function generatePayload() {
 // ============================================================
 // Copy
 // ============================================================
-function copySQL() {
-    const sql = document.getElementById('sqlOutput').textContent;
-    const btn = document.getElementById('sqlBtn');
-    if (navigator.clipboard) {
-        navigator.clipboard.writeText(sql).then(() => {
-            btn.innerHTML = '✔ Copied!';
-            btn.classList.add('copied');
-            setTimeout(() => {
-                btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy SQL';
-                btn.classList.remove('copied');
-            }, 2000);
-            showToast();
-        });
-    }
-}
-
 function copyToClipboard() {
     const cmd = document.getElementById('cmdOutput').textContent;
     const copyBtn = document.getElementById('copyBtn');
