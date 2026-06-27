@@ -311,6 +311,15 @@ if ([string]::IsNullOrWhiteSpace($BU) -or [string]::IsNullOrWhiteSpace($BranchID
 }
 Write-SAMLog "Config loaded: BU=$BU | Branch=$BranchID | Province=$Province"
 
+# แยก DeviceType และ BranchName จาก BranchID (format: "ชื่อสาขา-DeviceType")
+# เช่น "ท่าปลา1-PC" → BranchName="ท่าปลา1", DeviceType="PC"
+$DeviceType = ""
+$BranchName = $BranchID
+if ($BranchID -match "^(.+)-([^-]+)$") {
+    $BranchName = $Matches[1]
+    $DeviceType = $Matches[2]
+}
+
 # ==========================================
 # NETWORK CHECK (รอ Internet สูงสุด 2 ชม.)
 # ==========================================
@@ -453,13 +462,64 @@ try {
 } catch { $BLList += "Not Supported" }
 $CloudBL = $BLList -join " | "
 
-# Antivirus
+# Antivirus — รองรับ Defender, Trend Micro Apex One, และ AV อื่นๆ
+function Get-AVVersion {
+    param([string]$AVName)
+    try {
+        # Windows Defender
+        if ($AVName -match "Defender|Microsoft") {
+            $mpStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
+            if ($mpStatus -and $mpStatus.AMProductVersion) { return $mpStatus.AMProductVersion }
+        }
+        # Trend Micro Apex One / OfficeScan
+        if ($AVName -match "Trend Micro|Apex One|OfficeScan|PC-cillin") {
+            $TMPaths = @(
+                "HKLM:\SOFTWARE\TrendMicro\PC-cillinNTCorp\CurrentVersion",
+                "HKLM:\SOFTWARE\WOW6432Node\TrendMicro\PC-cillinNTCorp\CurrentVersion",
+                "HKLM:\SOFTWARE\TrendMicro\UniClient\UacSdk",
+                "HKLM:\SOFTWARE\WOW6432Node\TrendMicro\UniClient\UacSdk"
+            )
+            foreach ($p in $TMPaths) {
+                if (Test-Path $p) {
+                    $reg = Get-ItemProperty $p -ErrorAction SilentlyContinue
+                    $ver = if ($reg.ProgramVer)    { $reg.ProgramVer } `
+                      elseif ($reg.ServicePack)    { $reg.ServicePack } `
+                      elseif ($reg.AgentVersion)   { $reg.AgentVersion } `
+                      else { $null }
+                    if ($ver) { return $ver }
+                }
+            }
+            # fallback: ดึงจาก exe version
+            $exePaths = @(
+                "$env:ProgramFiles\Trend Micro\Security Agent\TMASEngine.exe",
+                "$env:ProgramFiles(x86)\Trend Micro\OfficeScan Client\TmListen.exe",
+                "$env:ProgramFiles\Trend Micro\Apex One Security Agent\TMASEngine.exe"
+            )
+            foreach ($exe in $exePaths) {
+                if (Test-Path $exe) {
+                    $v = (Get-Item $exe -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
+                    if ($v) { return $v }
+                }
+            }
+        }
+        # Generic: ค้นหาใน Uninstall registry
+        $searchName = $AVName -replace " Antivirus| Security| Endpoint| Agent",""
+        $swPaths = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                     "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*")
+        $found = Get-ItemProperty $swPaths -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -and $_.DisplayName -match [regex]::Escape($searchName) } |
+            Select-Object -First 1
+        if ($found -and $found.DisplayVersion) { return $found.DisplayVersion }
+    } catch {}
+    return "Unknown"
+}
+
 $AVList = @()
 try {
     $AVs = Get-CimInstance -Namespace "root\SecurityCenter2" -ClassName AntivirusProduct -ErrorAction Stop
     foreach ($AV in $AVs) {
         $AVN = $AV.displayName
-        $AVV = if($AVN -match "Defender"){(Get-MpComputerStatus -ErrorAction SilentlyContinue).AMProductVersion}else{"Unknown"}
+        $AVV = Get-AVVersion -AVName $AVN
         $AVList += "$AVN (v.$AVV)"
     }
 } catch { $AVList += "WMI Error" }
@@ -576,6 +636,8 @@ $NowTH   = $NowUTC.AddHours(7)
 $CurrentData = [ordered]@{
     BU             = $BU
     BranchID       = $BranchID
+    BranchName     = $BranchName
+    DeviceType     = $DeviceType
     Province       = $Province
     ComputerName   = $env:COMPUTERNAME
     ComputerDesc   = $CompDesc
@@ -642,7 +704,8 @@ $DeltaPayload     = [ordered]@{
     SerialNumber = $SafeSerial
     ComputerName = $env:COMPUTERNAME
     updated_at   = $CurrentData.updated_at
-    LastSyncTH   = $CurrentData.LastSyncTH
+    LastSyncTH   = $CurrentData.LastSyncTH   # ส่งทุก sync type เสมอ — สัญญาณชีพ
+    AgentVersion = $CurrentData.AgentVersion  # ส่งทุกครั้งเพื่อยืนยัน version
 }
 
 foreach ($Key in $CurrentData.Keys) {
@@ -720,6 +783,7 @@ while ($Attempt -lt $MaxRetries -and -not $IsSuccess) {
                 OSVersion = $CurrentData.OSVersion; RAM = $CurrentData.RAM; IPAddress = $CurrentData.IPAddress
                 DriveSpace = $CurrentData.DriveSpace; DiskHealth = $CurrentData.DiskHealth
                 Antivirus1 = $CurrentData.Antivirus1; WinUpdate = $CurrentData.WinUpdate
+                BranchName = $CurrentData.BranchName; DeviceType = $CurrentData.DeviceType
             }
         }
         try { $NewState | ConvertTo-Json -Depth 5 | Out-File $StateFile -Encoding UTF8 } catch {}
