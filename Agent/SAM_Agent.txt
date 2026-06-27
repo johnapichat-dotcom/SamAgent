@@ -313,22 +313,19 @@ if ([string]::IsNullOrWhiteSpace($BU) -or [string]::IsNullOrWhiteSpace($BranchID
 }
 Write-SAMLog "Config loaded: BU=$BU | Branch=$BranchID | Province=$Province"
 
-# BranchName = BranchID (ชื่อสาขาล้วนๆ)
-# DeviceType  = อ่านจาก Config โดยตรง (Config ใหม่)
-# Backward: ถ้า Config เก่าไม่มี DeviceType แต่ BranchID มี "-" → parse
-$BranchName = $BranchID
+# DeviceType: อ่านจาก Config ใหม่ หรือ parse จาก BranchID เก่า (backward compatible)
+# BranchID: ชื่อสาขาล้วนๆ ไม่มี DeviceType ต่อท้าย
 if ([string]::IsNullOrWhiteSpace($DeviceType)) {
-    # Config เก่า: ลอง parse จาก BranchID เช่น "ServerLP-PC" → "ServerLP" + "PC"
+    # Config เก่า: BranchID = "ServerLP-PC" → BranchID="ServerLP", DeviceType="PC"
     if ($BranchID -match "^(.+)-([^-]+)$") {
-        $BranchName = $Matches[1]
+        $BranchID   = $Matches[1]   # ตัด DeviceType ออกจาก BranchID
         $DeviceType = $Matches[2]
-        Write-SAMLog "Legacy BranchID parsed: BranchName=$BranchName DeviceType=$DeviceType" -Level "INFO"
+        Write-SAMLog "Legacy config parsed: BranchID=$BranchID DeviceType=$DeviceType" -Level "INFO"
     } else {
-        Write-SAMLog "DeviceType not set (no dash in BranchID=$BranchID)" -Level "WARN"
+        Write-SAMLog "DeviceType not set, BranchID=$BranchID" -Level "WARN"
     }
-} else {
-    Write-SAMLog "Config: BranchName=$BranchName DeviceType=$DeviceType"
 }
+Write-SAMLog "Config: BU=$BU BranchID=$BranchID DeviceType=$DeviceType Province=$Province"
 
 # ==========================================
 # NETWORK CHECK (รอ Internet สูงสุด 2 ชม.)
@@ -637,8 +634,7 @@ $NowTH   = $NowUTC.AddHours(7)
 
 $CurrentData = [ordered]@{
     BU             = $BU
-    BranchID       = $BranchName    # ส่งแค่ชื่อสาขา (ไม่มี -DeviceType)
-    BranchName     = $BranchName
+    BranchID       = $BranchID      # ชื่อสาขาล้วนๆ
     DeviceType     = $DeviceType
     Province       = $Province
     ComputerName   = $env:COMPUTERNAME
@@ -758,7 +754,20 @@ $Headers = @{
     "User-Agent"    = "SAM-Agent/v$SAM_VERSION"
 }
 
-$JsonPayload = ($PayloadData | ConvertTo-Json -Depth 5 -Compress) -replace '\\u0000', ''
+# กรองเฉพาะ field ที่มีใน Supabase schema (ป้องกัน 400 Bad Request)
+$SupabaseFields = @(
+    "BU","BranchID","DeviceType","Province","ComputerName","ComputerDesc","Manufacturer","Model",
+    "SerialNumber","OSVersion","WinUpdate","BootPerf","CPU","RAM","IPAddress","MACAddress",
+    "Antivirus1","Antivirus2","Firewall","DiskHealth","DriveSpace","BitLocker","StabilityScore",
+    "Uptime","PendingReboot","TeamViewerID","AnyDeskID","ActiveUsers","AllPrinters","AllSoftware",
+    "AgentVersion","Type","ChangedFields","updated_at","LastSyncTH"
+)
+$FilteredPayload = [ordered]@{}
+foreach ($k in $PayloadData.Keys) {
+    if ($SupabaseFields -contains $k) { $FilteredPayload[$k] = $PayloadData[$k] }
+    else { Write-SAMLog "Skipped field not in schema: $k" -Level "WARN" }
+}
+$JsonPayload = ($FilteredPayload | ConvertTo-Json -Depth 5 -Compress) -replace '\\u0000', ''
 $Utf8Bytes   = [System.Text.Encoding]::UTF8.GetBytes($JsonPayload)
 $MaxRetries  = 6; $Attempt = 0; $IsSuccess = $false
 
@@ -785,7 +794,7 @@ while ($Attempt -lt $MaxRetries -and -not $IsSuccess) {
                 OSVersion = $CurrentData.OSVersion; RAM = $CurrentData.RAM; IPAddress = $CurrentData.IPAddress
                 DriveSpace = $CurrentData.DriveSpace; DiskHealth = $CurrentData.DiskHealth
                 Antivirus1 = $CurrentData.Antivirus1; WinUpdate = $CurrentData.WinUpdate
-                BranchName = $CurrentData.BranchName; DeviceType = $CurrentData.DeviceType
+                DeviceType = $CurrentData.DeviceType
             }
         }
         try { $NewState | ConvertTo-Json -Depth 5 | Out-File $StateFile -Encoding UTF8 } catch {}
