@@ -1,0 +1,68 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+  <title>Monitor Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { font-family: Arial; margin: 20px; background: #f5f5f5; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .number { font-size: 32px; font-weight: bold; color: #007bff; }
+    .label { color: #666; font-size: 14px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    function Dashboard() {
+      const [stats, setStats] = React.useState(null);
+      
+      React.useEffect(() => {
+        fetch('https://monitor-api.john-apichat.workers.dev/api/stats')
+          .then(r => r.json())
+          .then(d => setStats(d))
+          .catch(e => console.error(e));
+      }, []);
+      
+      if (!stats) return <div style={{textAlign: 'center', marginTop: '50px'}}>Loading...</div>;
+      
+      return (
+        <div>
+          <h1>📊 IT Monitor Dashboard</h1>
+          <div className="stats">
+            <div className="card">
+              <div className="number">{stats.total}</div>
+              <div className="label">Total Computers</div>
+            </div>
+            <div className="card">
+              <div className="number" style={{color: '#28a745'}}>{stats.online}</div>
+              <div className="label">Online</div>
+            </div>
+            <div className="card">
+              <div className="number" style={{color: '#dc3545'}}>{stats.critical}</div>
+              <div className="label">Critical</div>
+            </div>
+            <div className="card">
+              <div className="number" style={{color: '#fd7e14'}}>{stats.diskFull}</div>
+              <div className="label">Disk Full</div>
+            </div>
+            <div className="card">
+              <div className="number" style={{color: '#dc3545'}}>{stats.avOff}</div>
+              <div className="label">AV Off</div>
+            </div>
+            <div className="card">
+              <div className="number" style={{color: '#6c757d'}}>{stats.offline}</div>
+              <div className="label">Offline</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    
+    ReactDOM.render(<Dashboard />, document.getElementById('root'));
+  </script>
+</body>
+</html>
