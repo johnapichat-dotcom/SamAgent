@@ -479,47 +479,24 @@ function generatePayload() {
     const fullBranch = `${branch}-${deviceType}`;
     const configJson = `{"BU":"${bu}","BranchID":"${fullBranch}","Province":"${province}"}`;
 
-    let cmd, steps, title, note;
+    // ── NEW INSTALL v3.1.0 ──
+    const title = 'New Install — v3.1.0';
+    const steps = ['Write Config', 'Download & Verify Files', 'Setup Tasks', 'ForceFullSync', 'Done ✓'];
+    const note  = 'Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง';
 
-    if (currentMode === 'new') {
-        // ── NEW INSTALL ──
-        // 1. สร้างโฟลเดอร์ + เขียน Config
-        // 2. ดาวน์โหลด SAM_Scheduler, SAM_Agent, SAM_Update, smartctl
-        // 3. รัน SAM_Scheduler -Setup (ลง Tasks + ForceFullSync แรก)
-        title = 'New Install — v3.1.0';
-        steps = ['Write Config', 'Download & Verify Files', 'Setup Tasks', 'ForceFullSync', 'Done ✓'];
-        note  = 'Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง';
+    // UTF-16LE Base64 สำหรับ PowerShell -EncodedCommand
+    function toPSEncoded(script) {
+        const buf = new ArrayBuffer(script.length * 2);
+        const view = new DataView(buf);
+        for (let i = 0; i < script.length; i++) view.setUint16(i * 2, script.charCodeAt(i), true);
+        const bytes = new Uint8Array(buf);
+        let bin = '';
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return btoa(bin);
+    }
 
-        // ใช้ -EncodedCommand (UTF-16LE Base64) → ไม่มี quote/escape ปัญหาเลย
-        // ทั้ง CMD และ PS รัน script ที่ encode แล้วโดยตรง
-        function toPSEncoded(script) {
-            // PowerShell -EncodedCommand ต้องการ UTF-16LE Base64
-            const buf = new ArrayBuffer(script.length * 2);
-            const view = new DataView(buf);
-            for (let i = 0; i < script.length; i++) {
-                view.setUint16(i * 2, script.charCodeAt(i), true);
-            }
-            const bytes = new Uint8Array(buf);
-            let bin = '';
-            for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-            return btoa(bin);
-        }
-
-        // สร้าง CMD แบบ visible script file — ไม่ใช้ EncodedCommand
-        // เพื่อหลีกเลี่ยงปัญหา decode บน Windows 10 บางเวอร์ชัน
-        // Script ตรวจสอบไฟล์หลัง download — ถ้าขาดหรือเล็กเกินไป retry 1 ครั้ง
-        function toPSEncoded(script) {
-            const buf = new ArrayBuffer(script.length * 2);
-            const view = new DataView(buf);
-            for (let i = 0; i < script.length; i++) view.setUint16(i * 2, script.charCodeAt(i), true);
-            const bytes = new Uint8Array(buf);
-            let bin = '';
-            for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-            return btoa(bin);
-        }
-
-        const installScript = [
-            `$d = 'C:\\IT_Support'`,
+    const installScript = [
+        `$d = 'C:\\IT_Support'`,
             `New-Item -ItemType Directory -Force -Path $d | Out-Null`,
             // เขียน Config
             `$cfg = [ordered]@{ BU='${bu}'; BranchID='${branch}'; DeviceType='${deviceType}'; Province='${province}' }`,
@@ -547,10 +524,8 @@ function generatePayload() {
             `& ($d+'\\SAM_Agent.ps1') -Silent -ForceFullSync`
         ].join('\n');
 
-        const encoded = toPSEncoded(installScript);
-        cmd = `powershell -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
-
-    }
+    const encoded = toPSEncoded(installScript);
+    const cmd = `powershell -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
 
     // Render
     document.getElementById('result-title').textContent = title;
