@@ -1,6 +1,6 @@
 ﻿# ==============================================================================
 # S.A.M. SCHEDULER  (Smart Agent Management - Orchestrator)
-# VERSION     : 3.1.0
+# VERSION     : 3.0.0
 # FILE        : SAM_Scheduler.ps1
 # ROLE        : Master Orchestrator — ควบคุม Timing, Trigger, และ Task Queue
 #               ไม่เก็บข้อมูลระบบเอง, ไม่ sync เอง → เรียก Agent / Update แทน
@@ -16,7 +16,7 @@ param(
 # ==========================================
 # CONSTANTS — แก้ตรงนี้จุดเดียว
 # ==========================================
-$SAM_VERSION     = "3.1.0"
+$SAM_VERSION     = "3.0.0"
 $WorkDir         = "C:\IT_Support"
 $LogFile         = "$WorkDir\SAM_Log.txt"
 $StateFile       = "$WorkDir\LastState.json"
@@ -28,12 +28,11 @@ $UpdateScript    = "$WorkDir\SAM_Update.ps1"
 $SchedulerScript = "$WorkDir\SAM_Scheduler.ps1"
 
 # Task Names
-$TASK_AGENT_SYNC    = "SAM_Agent_Sync"       # Delta sync ทุก 4 ชม.
-$TASK_C2_DAY        = "SAM_C2_Poll_Day"      # C2 poll กลางวัน 06:00-17:00 ทุก 40 นาที
-$TASK_C2_NIGHT      = "SAM_C2_Poll_Night"    # C2 poll กลางคืน 17:00-06:00 ทุก 80 นาที
-$TASK_FULL_SYNC     = "SAM_FullSync_Weekly"  # FullSync ทุกสัปดาห์
-$TASK_UPDATE_CHECK  = "SAM_Update_Check"     # ตรวจ update 09:00 + jitter 0-4 ชม.
-$TASK_LOG_ROTATE    = "SAM_LogRotate"        # ตัด Log ทุกวัน 10:00
+$TASK_AGENT_SYNC    = "SAM_Agent_Sync"       # Full collect + sync (ทุก 2 ชม.)
+$TASK_C2_POLL       = "SAM_C2_Poll"          # C2 command polling (ทุก 20 นาที)
+$TASK_FULL_SYNC     = "SAM_FullSync_Daily"   # Force FullSync ทุก 2 วัน
+$TASK_UPDATE_CHECK  = "SAM_Update_Check"     # อัปเดต + self-heal (ทุกวัน 07:00)
+$TASK_LOG_ROTATE    = "SAM_LogRotate"        # ตัด Log เก่า (ทุกวัน 00:05)
 
 # ==========================================
 # UTILITY: Write-SAMLog
@@ -121,107 +120,79 @@ function Install-SAMTasks {
     Write-SAMLog "=== Installing SAM Scheduled Tasks ==="
 
     # ลบ Legacy Tasks เก่าๆ
-    foreach ($OldTask in @("JARVIS_Smart_Sync","SAM_Smart_Sync","SAM_Agent_DailySync","SAM_C2_Poll","SAM_FullSync_Daily")) {
+    foreach ($OldTask in @("JARVIS_Smart_Sync","SAM_Smart_Sync","SAM_Agent_DailySync")) {
         schtasks /delete /tn $OldTask /f 2>$null | Out-Null
     }
 
     # --------------------------------------------------
-    # Jitter สุ่มต่อเครื่อง — กระจายเวลาไม่ให้คอขวด
-    # แต่ละ Task มี window ของตัวเอง
-    $J_Agent   = Get-Random -Min 0  -Max 239   # 0-3:59 นาที  (window 4 ชม.)
-    $J_C2Day   = Get-Random -Min 0  -Max 39    # 0-39 นาที    (window 40 นาที)
-    $J_C2Night = Get-Random -Min 0  -Max 79    # 0-79 นาที    (window 80 นาที)
-    $J_Full    = Get-Random -Min 0  -Max 359   # 0-5:59 นาที  (window กว้าง)
-    $J_Update  = Get-Random -Min 0  -Max 239   # 0-3:59 นาที
-    $J_Log     = Get-Random -Min 0  -Max 59    # 0-59 นาที
-
-    # คำนวณ Start Time จาก Base + Jitter (นาที)
-    $BaseAgent  = [datetime]::Today.AddHours(6).AddMinutes($J_Agent)
-    $BaseC2Day  = [datetime]::Today.AddHours(6).AddMinutes($J_C2Day)
-    $BaseC2Ngt  = [datetime]::Today.AddHours(17).AddMinutes($J_C2Night)
-    $BaseFull   = [datetime]::Today.AddHours(2).AddMinutes($J_Full)
-    $BaseUpdate = [datetime]::Today.AddHours(9).AddMinutes($J_Update)
-    $BaseLog    = [datetime]::Today.AddHours(10).AddMinutes($J_Log)
-
-    Write-SAMLog "Jitter: AgentSync=$($BaseAgent.ToString('HH:mm')) C2Day=$($BaseC2Day.ToString('HH:mm')) C2Night=$($BaseC2Ngt.ToString('HH:mm')) FullSync=$($BaseFull.ToString('HH:mm')) Update=$($BaseUpdate.ToString('HH:mm')) Log=$($BaseLog.ToString('HH:mm'))"
-
-    # TASK 1: SAM_Agent_Sync — Delta Sync ทุก 4 ชม. + Startup
-    # Start time สุ่ม 06:00-09:59 → repeat ทุก 4 ชม.
+    # TASK 1: SAM_Agent_Sync — เก็บข้อมูล + Delta Sync
+    #   ทุก Startup + ทุก 2 ชั่วโมง ตลอด 24 ชม.
+    #   StartWhenAvailable = ถ้าพลาดเวลา (เครื่องปิดอยู่)
+    #   จะรันทันทีที่เปิดเครื่องครั้งถัดไป
     # --------------------------------------------------
     $T1_Startup = New-ScheduledTaskTrigger -AtStartup
-    $T1_Repeat  = New-ScheduledTaskTrigger -Daily -At $BaseAgent
-    $T1_Repeat.Repetition.Interval = "PT4H"
-    $T1_Repeat.Repetition.Duration = "P1D"
+    $T1_Repeat  = New-ScheduledTaskTrigger -Once -At "00:00AM" `
+                      -RepetitionInterval (New-TimeSpan -Hours 2) `
+                      -RepetitionDuration (New-TimeSpan -Days 9999)
     Register-SAMTask `
         -TaskName    $TASK_AGENT_SYNC `
         -ScriptFile  $AgentScript `
         -ExtraArgs   "-Silent -DeltaOnly" `
         -Triggers    @($T1_Startup, $T1_Repeat) `
-        -Description "SAM: Delta Sync every 4hr (jitter start $($BaseAgent.ToString('HH:mm')))"
+        -Description "SAM: Collect system data and send Delta Sync every 2 hours (24hr coverage)"
 
     # --------------------------------------------------
-    # TASK 2: SAM_C2_Poll_Day — C2 กลางวัน ทุก 40 นาที
-    # Start time สุ่ม 06:00-06:39
+    # TASK 2: SAM_C2_Poll — ดึง Remote Command จาก Cloud
+    #   ทุก 20 นาที ตลอดวัน
+    #   (เบาพอ, ตอบสนองเร็วพอ, ไม่กิน Supabase quota)
     # --------------------------------------------------
-    $T2_Day = New-ScheduledTaskTrigger -Daily -At $BaseC2Day
-    $T2_Day.Repetition.Interval = "PT40M"
-    $T2_Day.Repetition.Duration = "PT11H"
+    $T2 = New-ScheduledTaskTrigger -Once -At "00:00AM" `
+              -RepetitionInterval (New-TimeSpan -Minutes 20)
     Register-SAMTask `
-        -TaskName    $TASK_C2_DAY `
+        -TaskName    $TASK_C2_POLL `
         -ScriptFile  $AgentScript `
         -ExtraArgs   "-Silent -C2Only" `
-        -Triggers    @($T2_Day) `
-        -Description "SAM: C2 Poll day every 40min (jitter start $($BaseC2Day.ToString('HH:mm')))"
+        -Triggers    @($T2) `
+        -Description "SAM: C2 Command polling every 20 minutes"
 
     # --------------------------------------------------
-    # TASK 3: SAM_C2_Poll_Night — C2 กลางคืน ทุก 80 นาที
-    # Start time สุ่ม 17:00-18:19
+    # TASK 3: SAM_FullSync_Daily — Force FullSync ทุก 2 วัน
+    #   ทำงาน 02:00 AM วันคู่ (Mon, Wed, Fri, Sun)
+    #   StartWhenAvailable = ถ้าเครื่องปิดตี2 จะรันพอเปิดเครื่อง
     # --------------------------------------------------
-    $T3_Night = New-ScheduledTaskTrigger -Daily -At $BaseC2Ngt
-    $T3_Night.Repetition.Interval = "PT80M"
-    $T3_Night.Repetition.Duration = "PT13H"
-    Register-SAMTask `
-        -TaskName    $TASK_C2_NIGHT `
-        -ScriptFile  $AgentScript `
-        -ExtraArgs   "-Silent -C2Only" `
-        -Triggers    @($T3_Night) `
-        -Description "SAM: C2 Poll night every 80min (jitter start $($BaseC2Ngt.ToString('HH:mm')))"
-
-    # --------------------------------------------------
-    # TASK 4: SAM_FullSync_Weekly — Full UPSERT ทุก วันจันทร์
-    # Start time สุ่ม 02:00-07:59
-    # --------------------------------------------------
-    $T4 = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At $BaseFull
+    $T3 = New-ScheduledTaskTrigger -Weekly `
+              -DaysOfWeek Monday,Wednesday,Friday,Sunday `
+              -At "02:00AM"
     Register-SAMTask `
         -TaskName    $TASK_FULL_SYNC `
         -ScriptFile  $AgentScript `
         -ExtraArgs   "-Silent -ForceFullSync" `
-        -Triggers    @($T4) `
-        -Description "SAM: Weekly FullSync Monday (jitter $($BaseFull.ToString('HH:mm')))"
+        -Triggers    @($T3) `
+        -Description "SAM: Force Full Sync every 2 days (StartWhenAvailable)"
 
     # --------------------------------------------------
-    # TASK 5: SAM_Update_Check — ตรวจ version
-    # Start time สุ่ม 09:00-12:59
+    # TASK 4: SAM_Update_Check — ตรวจอัปเดต + Self-Heal
+    #   ทุกวัน 07:00 AM
     # --------------------------------------------------
-    $T5 = New-ScheduledTaskTrigger -Daily -At $BaseUpdate
+    $T4 = New-ScheduledTaskTrigger -Daily -At "07:00AM"
     Register-SAMTask `
         -TaskName    $TASK_UPDATE_CHECK `
         -ScriptFile  $UpdateScript `
         -ExtraArgs   "-Silent" `
-        -Triggers    @($T5) `
-        -Description "SAM: Update check (jitter $($BaseUpdate.ToString('HH:mm')))"
+        -Triggers    @($T4) `
+        -Description "SAM: Check for updates and self-heal corrupted files"
 
     # --------------------------------------------------
-    # TASK 6: SAM_LogRotate — ตัด Log เก่า
-    # Start time สุ่ม 10:00-10:59
+    # TASK 5: SAM_LogRotate — ตัด Log เก่า (เก็บ 10 วัน)
+    #   ทุกวัน 00:05 AM
     # --------------------------------------------------
-    $T6 = New-ScheduledTaskTrigger -Daily -At $BaseLog
+    $T5 = New-ScheduledTaskTrigger -Daily -At "00:05AM"
     Register-SAMTask `
         -TaskName    $TASK_LOG_ROTATE `
         -ScriptFile  $SchedulerScript `
         -ExtraArgs   "-LogRotateOnly" `
-        -Triggers    @($T6) `
-        -Description "SAM: Log rotation (jitter $($BaseLog.ToString('HH:mm')))"
+        -Triggers    @($T5) `
+        -Description "SAM: Rotate logs - keep 10 days"
 
     # สร้าง Helper .bat files ทันทีหลัง Tasks ลง
     New-SAMHelperFiles
@@ -244,6 +215,8 @@ if %errorLevel% neq 0 (
 )
 cd /d C:\IT_Support
 if exist "LastState.json" del /q "LastState.json"
+REM ไม่ใส่ -Silent เพื่อให้ GUI ขึ้นได้ถ้ายังไม่มี SystemConfig.json
+REM ถ้ามี Config แล้ว Agent จะรัน Silent เอง (UserInteractive check)
 powershell.exe -ExecutionPolicy Bypass -File "SAM_Agent.ps1" -ForceFullSync
 exit
 '@
@@ -395,8 +368,7 @@ function Invoke-LogRotation {
 function Show-SAMStatus {
     $TaskList = @(
         $TASK_AGENT_SYNC,
-        $TASK_C2_DAY,
-        $TASK_C2_NIGHT,
+        $TASK_C2_POLL,
         $TASK_FULL_SYNC,
         $TASK_UPDATE_CHECK,
         $TASK_LOG_ROTATE
@@ -436,7 +408,7 @@ function Show-SAMStatus {
 # ==========================================
 function Uninstall-SAM {
     Write-SAMLog "=== SAM Uninstall requested ==="
-    foreach ($TName in @($TASK_AGENT_SYNC,$TASK_C2_DAY,$TASK_C2_NIGHT,$TASK_FULL_SYNC,$TASK_UPDATE_CHECK,$TASK_LOG_ROTATE)) {
+    foreach ($TName in @($TASK_AGENT_SYNC,$TASK_C2_POLL,$TASK_FULL_SYNC,$TASK_UPDATE_CHECK,$TASK_LOG_ROTATE)) {
         schtasks /delete /tn $TName /f 2>$null | Out-Null
         Write-SAMLog "Removed task: $TName"
     }

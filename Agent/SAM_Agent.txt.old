@@ -1,6 +1,6 @@
 ﻿# ==============================================================================
 # S.A.M. AGENT  (Smart Agent Management - Data Collector & Sync Engine)
-# VERSION     : 3.1.0
+# VERSION     : 3.0.0
 # FILE        : SAM_Agent.ps1
 # ROLE        : เก็บข้อมูลระบบ → เปรียบเทียบ Delta → Sync ไป Supabase
 #               ถูกเรียกโดย SAM_Scheduler เท่านั้น (ไม่รัน Task เอง)
@@ -18,7 +18,7 @@ param(
 # ==========================================
 # CONSTANTS
 # ==========================================
-$SAM_VERSION   = "3.1.0"
+$SAM_VERSION   = "3.0.0"
 $WorkDir       = "C:\IT_Support"
 $LogFile       = "$WorkDir\SAM_Log.txt"
 $StateFile     = "$WorkDir\LastState.json"   # { Hash, FieldHashes, LastFullSync, LastWriteTime }
@@ -156,19 +156,6 @@ if ($C2Only) {
                 Invoke-C2Command -RowId $Row.id -RemoteCmd $Row.RemoteCommand -SafeSerial $SafeSerial
             } else {
                 Write-SAMLog "C2 Poll: No pending command."
-            }
-
-            # อัปเดต last seen ทุกครั้งที่ poll สำเร็จ (บอกว่าเครื่องยัง online)
-            try {
-                $NowUTC   = (Get-Date).ToUniversalTime()
-                $NowTH    = $NowUTC.AddHours(7).ToString("yyyy-MM-dd HH:mm:ss")
-                $PingUrl  = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices?SerialNumber=eq.$([uri]::EscapeDataString($SafeSerial))"
-                $PingBody = @{ updated_at = $NowUTC.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"); LastSyncTH = $NowTH } | ConvertTo-Json -Compress
-                $PingHdr  = @{ "apikey"=$SupabaseKey; "Authorization"="Bearer $SupabaseKey"; "Content-Type"="application/json"; "Prefer"="return=minimal" }
-                Invoke-RestMethod -Uri $PingUrl -Method Patch -Headers $PingHdr -Body $PingBody -TimeoutSec 10 | Out-Null
-                Write-SAMLog "C2 Poll heartbeat updated: $NowTH"
-            } catch {
-                Write-SAMLog "C2 heartbeat update failed: $($_.Exception.Message)" -Level "WARN"
             }
         }
     } catch {
@@ -823,14 +810,6 @@ while ($Attempt -lt $MaxRetries -and -not $IsSuccess) {
     } catch {
         if ($null -ne $Timer) { $Timer.Stop() }
         $ErrMsg = if ($_.ErrorDetails) { $_.ErrorDetails.Message } else { $_.Exception.Message }
-        # ดึง Supabase error detail จาก response body
-        if ($_.Exception.Response) {
-            try {
-                $reader  = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
-                $body    = $reader.ReadToEnd()
-                $ErrMsg += " | Supabase: $body"
-            } catch {}
-        }
         $RetryWait = Get-Random -Minimum 60 -Maximum 300
         Write-SAMLog "Sync failed (Attempt $Attempt/$MaxRetries): $ErrMsg. Retry in $RetryWait s." -Level "WARN"
         if ($Attempt -lt $MaxRetries) { Start-Sleep -Seconds $RetryWait }

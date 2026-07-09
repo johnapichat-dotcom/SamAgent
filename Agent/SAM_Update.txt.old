@@ -1,6 +1,6 @@
 ﻿# ==============================================================================
 # S.A.M. UPDATE  (Smart Agent Management - Self-Healing & Auto-Updater)
-# VERSION     : 3.1.0
+# VERSION     : 3.0.0
 # FILE        : SAM_Update.ps1
 # ROLE        : ตรวจสอบ version, ดาวน์โหลด patch, ตรวจ hash, ซ่อมไฟล์เสีย
 #               ถูกเรียกโดย SAM_Scheduler ทุกวัน 07:00 น.
@@ -15,7 +15,7 @@ param(
 # ==========================================
 # CONSTANTS
 # ==========================================
-$SAM_VERSION = "3.1.0"
+$SAM_VERSION = "3.0.0"
 $WorkDir     = "C:\IT_Support"
 $LogFile     = "$WorkDir\SAM_Log.txt"
 
@@ -25,7 +25,7 @@ $VersionUrl  = "$BaseRawUrl/version.txt"           # รูปแบบ: 3.0.1|s
 $AgentUrl    = "$BaseRawUrl/SAM_Agent.txt"         # ไฟล์จริง (นามสกุล .txt บน GitHub)
 $SchedulerUrl= "$BaseRawUrl/SAM_Scheduler.txt"
 $UpdateUrl   = "$BaseRawUrl/SAM_Update.txt"
-$SmartCtlUrl = "https://github.com/johnapichat-dotcom/SamAgent/releases/download/UpdateSAM/smartctl.exe"
+$SmartCtlUrl = "$BaseRawUrl/smartctl.exe"
 
 # Local paths
 $AgentScript     = "$WorkDir\SAM_Agent.ps1"
@@ -36,9 +36,8 @@ $UpdateStateFile = "$WorkDir\UpdateState.json"
 
 # Task names (ต้องตรงกับ Scheduler)
 $TASK_AGENT_SYNC   = "SAM_Agent_Sync"
-$TASK_C2_DAY       = "SAM_C2_Poll_Day"
-$TASK_C2_NIGHT     = "SAM_C2_Poll_Night"
-$TASK_FULL_SYNC    = "SAM_FullSync_Weekly"
+$TASK_C2_POLL      = "SAM_C2_Poll"
+$TASK_FULL_SYNC    = "SAM_FullSync_Daily"
 $TASK_UPDATE_CHECK = "SAM_Update_Check"
 $TASK_LOG_ROTATE   = "SAM_LogRotate"
 
@@ -141,15 +140,6 @@ function Download-SafeScript {
 # NETWORK CHECK
 # ==========================================
 Write-SAMLog "=== SAM Update Check v$SAM_VERSION ==="
-
-# Jitter 0-4 ชม. — กระจาย 7000 เครื่องไม่ให้ hit GitHub พร้อมกัน
-if ($Silent -and -not $ForceCheck) {
-    $JitterSec = Get-Random -Minimum 0 -Maximum 14400
-    $JitterMin = [math]::Round($JitterSec / 60, 1)
-    Write-SAMLog "Jitter delay: $JitterMin min ($(Get-Date).AddSeconds($JitterSec).ToString('HH:mm')))"
-    Start-Sleep -Seconds $JitterSec
-}
-
 $NetOK = $false
 try {
     $R = Invoke-WebRequest -Uri "http://www.msftconnecttest.com/connecttest.txt" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
@@ -189,17 +179,15 @@ foreach ($FilePath in $FilesToCheck.Keys) {
     }
 }
 
-# smartctl.exe — download เฉพาะตอนไม่มีไฟล์ หรือ agent version มีการอัปเดต
+# smartctl.exe
 if (-not (Test-Path $SmartCtlPath) -or (Get-Item $SmartCtlPath).Length -lt 10240) {
-    Write-SAMLog "smartctl.exe missing/corrupt. Downloading from Releases..." -Level "WARN"
+    Write-SAMLog "smartctl.exe missing/corrupt. Downloading..." -Level "WARN"
     try {
         Invoke-WebRequest -Uri $SmartCtlUrl -OutFile $SmartCtlPath -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
-        Write-SAMLog "smartctl.exe downloaded OK. Size: $([math]::Round((Get-Item $SmartCtlPath).Length/1KB,0)) KB"
+        Write-SAMLog "smartctl.exe downloaded OK."
     } catch {
         Write-SAMLog "smartctl.exe download failed: $($_.Exception.Message)" -Level "ERROR"
     }
-} else {
-    Write-SAMLog "smartctl.exe OK ($([math]::Round((Get-Item $SmartCtlPath).Length/1KB,0)) KB) — skip download."
 }
 
 # ==========================================
@@ -207,7 +195,7 @@ if (-not (Test-Path $SmartCtlPath) -or (Get-Item $SmartCtlPath).Length -lt 10240
 # ==========================================
 Write-SAMLog "--- Scheduled Tasks Health Check ---"
 $TasksOK = $true
-foreach ($TName in @($TASK_AGENT_SYNC, $TASK_C2_DAY, $TASK_C2_NIGHT, $TASK_FULL_SYNC, $TASK_UPDATE_CHECK, $TASK_LOG_ROTATE)) {
+foreach ($TName in @($TASK_AGENT_SYNC, $TASK_C2_POLL, $TASK_FULL_SYNC, $TASK_UPDATE_CHECK, $TASK_LOG_ROTATE)) {
     $Task = Get-ScheduledTask -TaskName $TName -ErrorAction SilentlyContinue
     if (-not $Task) {
         Write-SAMLog "Task missing: $TName → Re-installing via Scheduler..." -Level "WARN"
