@@ -398,7 +398,7 @@
 
         <div class="result-label">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
-            Deployment Command
+            <span id="result-title">Deployment Command</span>
         </div>
 
         <!-- Steps -->
@@ -528,7 +528,7 @@ function generatePayload() {
     const cmd = `powershell -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
 
     // Render
-    document.getElementById('result-title').textContent = title;
+    const titleEl = document.getElementById('result-title'); if(titleEl) titleEl.textContent = title;
     document.getElementById('note-text').innerHTML = note;
     document.getElementById('cmdOutput').textContent = cmd;
 
