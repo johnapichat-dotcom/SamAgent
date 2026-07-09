@@ -19,17 +19,13 @@
             --c-text:     #e2e8f0;
             --c-muted:    #64748b;
         }
-
         * { box-sizing: border-box; }
-
         body {
             background-color: var(--c-bg);
             color: var(--c-text);
             font-family: 'Segoe UI', system-ui, sans-serif;
             min-height: 100vh;
         }
-
-        /* Grid background */
         body::before {
             content: '';
             position: fixed; inset: 0; z-index: 0;
@@ -39,7 +35,6 @@
             background-size: 40px 40px;
             pointer-events: none;
         }
-
         .main-wrap {
             position: relative; z-index: 1;
             display: flex; flex-direction: column;
@@ -47,249 +42,114 @@
             padding: 2rem 1rem 4rem;
             gap: 1.5rem;
         }
-
-        /* Header */
-        .sam-header {
-            text-align: center;
-            width: 100%; max-width: 580px;
-        }
+        .sam-header { text-align: center; width: 100%; max-width: 580px; }
         .sam-title {
-            font-size: 1.6rem;
-            font-weight: 800;
-            letter-spacing: .15em;
-            color: var(--c-accent);
-            text-transform: uppercase;
+            font-size: 1.6rem; font-weight: 800; letter-spacing: .15em;
+            color: var(--c-accent); text-transform: uppercase;
             text-shadow: 0 0 18px rgba(0,229,255,.4);
             display: flex; align-items: center; justify-content: center; gap: .5rem;
         }
-        .sam-sub {
-            font-size: .75rem;
-            color: var(--c-muted);
-            letter-spacing: .1em;
-            margin-top: .3rem;
-        }
-
-        /* Version badge */
+        .sam-sub { font-size: .75rem; color: var(--c-muted); letter-spacing: .1em; margin-top: .3rem; }
         .ver-badge {
             display: inline-flex; align-items: center; gap: .4rem;
-            background: rgba(0,229,255,.08);
-            border: 1px solid rgba(0,229,255,.25);
-            color: var(--c-accent);
-            font-size: .68rem; font-weight: 700;
-            letter-spacing: .1em;
-            padding: .25rem .7rem;
-            border-radius: 999px;
-            margin-top: .6rem;
+            background: rgba(0,229,255,.08); border: 1px solid rgba(0,229,255,.25);
+            color: var(--c-accent); font-size: .68rem; font-weight: 700;
+            letter-spacing: .1em; padding: .25rem .7rem; border-radius: 999px; margin-top: .6rem;
         }
         .ver-dot { width:7px; height:7px; border-radius:50%; background:var(--c-ok); animation: pulse 2s infinite; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-        /* Card */
         .card {
             width: 100%; max-width: 580px;
-            background: var(--c-panel);
-            border: 1px solid rgba(0,229,255,.18);
-            border-radius: 12px;
-            padding: 1.5rem;
+            background: var(--c-panel); border: 1px solid rgba(0,229,255,.18);
+            border-radius: 12px; padding: 1.5rem;
             box-shadow: 0 0 30px rgba(0,229,255,.05);
         }
-
-
-
-        /* Section label */
         .sec-label {
-            font-size: .7rem;
-            font-weight: 700;
-            letter-spacing: .12em;
-            color: var(--c-muted);
-            text-transform: uppercase;
-            margin-bottom: .9rem;
-            display: flex; align-items: center; gap: .5rem;
+            font-size: .7rem; font-weight: 700; letter-spacing: .12em;
+            color: var(--c-muted); text-transform: uppercase;
+            margin-bottom: .9rem; display: flex; align-items: center; gap: .5rem;
         }
-        .sec-label::after {
-            content: '';
-            flex: 1; height: 1px;
-            background: rgba(255,255,255,.07);
-        }
-
-        /* Form elements */
-        label.field-label {
-            display: block;
-            font-size: .78rem;
-            font-weight: 600;
-            color: #94a3b8;
-            margin-bottom: .4rem;
-        }
-
+        .sec-label::after { content: ''; flex: 1; height: 1px; background: rgba(255,255,255,.07); }
+        label.field-label { display: block; font-size: .78rem; font-weight: 600; color: #94a3b8; margin-bottom: .4rem; }
         .field-row { margin-bottom: 1.1rem; }
-
         select, input[type="text"] {
-            width: 100%;
-            background: var(--c-panel2);
-            border: 1px solid #2d2d2d;
-            border-radius: 7px;
-            padding: .6rem .85rem;
-            color: var(--c-text);
-            font-size: .88rem;
-            appearance: none;
-            -webkit-appearance: none;
-            transition: border-color .2s, box-shadow .2s;
-            outline: none;
+            width: 100%; background: var(--c-panel2); border: 1px solid #2d2d2d;
+            border-radius: 7px; padding: .6rem .85rem; color: var(--c-text);
+            font-size: .88rem; appearance: none; -webkit-appearance: none;
+            transition: border-color .2s, box-shadow .2s; outline: none;
         }
         select:focus, input[type="text"]:focus {
-            border-color: var(--c-accent);
-            box-shadow: 0 0 0 3px rgba(0,229,255,.1);
+            border-color: var(--c-accent); box-shadow: 0 0 0 3px rgba(0,229,255,.1);
         }
         select option { background: #1e1e1e; }
-
-        .pair-row {
-            display: grid; grid-template-columns: 1fr auto;
-            gap: .5rem;
-        }
+        .pair-row { display: grid; grid-template-columns: 1fr auto; gap: .5rem; }
         .pair-row select { width: 120px; }
-
-
-
-        /* Generate button */
         .btn-generate {
-            width: 100%;
-            background: linear-gradient(135deg, #00e5ff, #0072ff);
-            color: #000;
-            font-weight: 800;
-            font-size: .85rem;
-            letter-spacing: .12em;
-            text-transform: uppercase;
-            padding: .85rem;
-            border-radius: 8px;
-            border: none;
-            cursor: pointer;
-            transition: all .25s;
+            width: 100%; background: linear-gradient(135deg, #00e5ff, #0072ff);
+            color: #000; font-weight: 800; font-size: .85rem; letter-spacing: .12em;
+            text-transform: uppercase; padding: .85rem; border-radius: 8px; border: none;
+            cursor: pointer; transition: all .25s;
             display: flex; align-items: center; justify-content: center; gap: .5rem;
             box-shadow: 0 0 20px rgba(0,229,255,.25);
         }
-        .btn-generate:hover {
-            box-shadow: 0 0 35px rgba(0,229,255,.45);
-            transform: translateY(-1px);
-        }
+        .btn-generate:hover { box-shadow: 0 0 35px rgba(0,229,255,.45); transform: translateY(-1px); }
         .btn-generate:active { transform: translateY(0); }
-
-        /* Result box */
         .result-card {
-            width: 100%; max-width: 580px;
-            background: var(--c-panel);
-            border: 1px solid rgba(0,229,255,.2);
-            border-radius: 12px;
-            padding: 1.4rem;
-            box-shadow: 0 0 25px rgba(0,229,255,.08);
-            display: none;
+            width: 100%; max-width: 580px; background: var(--c-panel);
+            border: 1px solid rgba(0,229,255,.2); border-radius: 12px; padding: 1.4rem;
+            box-shadow: 0 0 25px rgba(0,229,255,.08); display: none;
         }
         .result-card.visible { display: block; animation: slideUp .3s ease; }
         @keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
-
         .result-label {
-            font-size: .7rem;
-            font-weight: 700;
-            letter-spacing: .1em;
-            color: var(--c-accent);
-            text-transform: uppercase;
-            margin-bottom: .6rem;
-            display: flex; align-items: center; gap: .4rem;
+            font-size: .7rem; font-weight: 700; letter-spacing: .1em;
+            color: var(--c-accent); text-transform: uppercase;
+            margin-bottom: .6rem; display: flex; align-items: center; gap: .4rem;
         }
-
-        .step-pills {
-            display: flex; gap: .4rem; flex-wrap: wrap;
-            margin-bottom: .8rem;
-        }
+        .step-pills { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .8rem; }
         .step-pill {
-            font-size: .68rem;
-            padding: .2rem .6rem;
-            border-radius: 999px;
-            background: rgba(0,229,255,.08);
-            border: 1px solid rgba(0,229,255,.2);
-            color: var(--c-accent);
-            font-weight: 600;
+            font-size: .68rem; padding: .2rem .6rem; border-radius: 999px;
+            background: rgba(0,229,255,.08); border: 1px solid rgba(0,229,255,.2);
+            color: var(--c-accent); font-weight: 600;
         }
-
         .cmd-box {
-            background: #080808;
-            border: 1px solid #1e1e1e;
-            border-radius: 8px;
+            background: #080808; border: 1px solid #1e1e1e; border-radius: 8px;
             padding: 1rem 1.1rem;
             font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
-            font-size: .72rem;
-            color: #4ade80;
-            word-break: break-all;
-            white-space: pre-wrap;
-            line-height: 1.6;
-            max-height: 280px;
-            overflow-y: auto;
+            font-size: .72rem; color: #4ade80; word-break: break-all;
+            white-space: pre-wrap; line-height: 1.6; max-height: 280px; overflow-y: auto;
         }
-
-        /* Scrollbar */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #111; }
         ::-webkit-scrollbar-thumb { background: rgba(0,229,255,.3); border-radius: 4px; }
-
         .btn-copy {
-            width: 100%;
-            margin-top: .85rem;
-            background: var(--c-panel2);
-            border: 1px solid #333;
-            color: var(--c-text);
-            font-size: .82rem;
-            font-weight: 600;
-            padding: .65rem;
-            border-radius: 7px;
-            cursor: pointer;
+            width: 100%; margin-top: .85rem; background: var(--c-panel2);
+            border: 1px solid #333; color: var(--c-text); font-size: .82rem;
+            font-weight: 600; padding: .65rem; border-radius: 7px; cursor: pointer;
             display: flex; align-items: center; justify-content: center; gap: .45rem;
             transition: all .2s;
         }
         .btn-copy:hover { border-color: var(--c-accent); color: var(--c-accent); }
         .btn-copy.copied { background: rgba(34,197,94,.12); border-color: var(--c-ok); color: var(--c-ok); }
-
-        /* Warn note */
         .deploy-note {
-            font-size: .72rem;
-            color: var(--c-warn);
-            background: rgba(245,158,11,.06);
-            border: 1px solid rgba(245,158,11,.2);
-            border-radius: 6px;
-            padding: .5rem .75rem;
-            margin-bottom: .85rem;
+            font-size: .72rem; color: var(--c-warn);
+            background: rgba(245,158,11,.06); border: 1px solid rgba(245,158,11,.2);
+            border-radius: 6px; padding: .5rem .75rem; margin-bottom: .85rem;
             display: flex; align-items: flex-start; gap: .4rem;
         }
-
-        /* Toast */
         #toast {
-            position: fixed; bottom: 1.5rem; right: 1.5rem;
-            background: var(--c-ok);
-            color: #fff;
-            padding: .75rem 1.2rem;
-            border-radius: 8px;
+            position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--c-ok);
+            color: #fff; padding: .75rem 1.2rem; border-radius: 8px;
             font-size: .82rem; font-weight: 600;
             display: flex; align-items: center; gap: .5rem;
-            box-shadow: 0 4px 20px rgba(0,0,0,.4);
-            z-index: 100;
-            transform: translateY(80px);
-            opacity: 0;
-            transition: all .3s cubic-bezier(.34,1.56,.64,1);
-            pointer-events: none;
+            box-shadow: 0 4px 20px rgba(0,0,0,.4); z-index: 100;
+            transform: translateY(80px); opacity: 0;
+            transition: all .3s cubic-bezier(.34,1.56,.64,1); pointer-events: none;
         }
         #toast.show { transform: translateY(0); opacity: 1; }
-
-        /* Footer */
-        .footer {
-            font-size: .67rem;
-            color: #2d2d2d;
-            text-align: center;
-            letter-spacing: .08em;
-        }
-
-        /* Validation shake */
+        .footer { font-size: .67rem; color: #2d2d2d; text-align: center; letter-spacing: .08em; }
         @keyframes shake {
-            0%,100%{transform:translateX(0)}
-            20%,60%{transform:translateX(-6px)}
-            40%,80%{transform:translateX(6px)}
+            0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-6px)} 40%,80%{transform:translateX(6px)}
         }
         .shake { animation: shake .35s ease; border-color: var(--c-error) !important; }
     </style>
@@ -304,20 +164,11 @@
             S.A.M. Provisioning
         </div>
         <div class="sam-sub">Zero-Touch Deployment Center</div>
-        <div class="ver-badge">
-            <span class="ver-dot"></span>
-            v3.1.0 &nbsp;·&nbsp; Enterprise Edition
-        </div>
+        <div class="ver-badge"><span class="ver-dot"></span>v3.1.0 &nbsp;·&nbsp; Enterprise Edition</div>
     </div>
 
     <!-- Main Card -->
     <div class="card">
-
-
-
-
-
-        <!-- ── FORM ── -->
         <div class="sec-label">Device Configuration</div>
 
         <!-- BU -->
@@ -386,7 +237,6 @@
             </select>
         </div>
 
-        <!-- Generate Button -->
         <button class="btn-generate" onclick="generatePayload()">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-9 5 18 3-9h5"/></svg>
             Generate Deployment Command
@@ -395,23 +245,16 @@
 
     <!-- Result Card -->
     <div class="result-card" id="resultCard">
-
         <div class="result-label">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
             <span id="result-title">Deployment Command</span>
         </div>
-
-        <!-- Steps -->
         <div class="step-pills" id="stepPills"></div>
-
-        <!-- Warning note -->
         <div class="deploy-note">
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="flex-shrink:0;margin-top:2px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             <span id="note-text">Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง</span>
         </div>
-
         <div class="cmd-box" id="cmdOutput"></div>
-
         <button class="btn-copy" id="copyBtn" onclick="copyToClipboard()">
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
             Copy to Clipboard
@@ -434,20 +277,14 @@
 
 <script>
 // ============================================================
-// GitHub RAW URLs — v3.1.0  (เปลี่ยนตรงนี้จุดเดียวเมื่ออัปเดต)
+// GitHub URLs — v3.1.0
 // ============================================================
 const URLS = {
     scheduler : "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent/SAM_Scheduler.txt",
     agent     : "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent/SAM_Agent.txt",
     update    : "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent/SAM_Update.txt",
-    smartctl  : "https://github.com/johnapichat-dotcom/SamAgent/releases/download/UpdateSAM/smartctl.exe",
+    smartctl  : "https://github.com/johnapichat-dotcom/SamAgent/releases/download/UpdateSAM/smartctl.exe"
 };
-
-// ============================================================
-// Mode state
-// ============================================================
-
-
 
 // ============================================================
 // Validation
@@ -467,6 +304,19 @@ function validate() {
 }
 
 // ============================================================
+// UTF-16LE Base64 encoder สำหรับ PowerShell -EncodedCommand
+// ============================================================
+function toPSEncoded(script) {
+    const buf  = new ArrayBuffer(script.length * 2);
+    const view = new DataView(buf);
+    for (let i = 0; i < script.length; i++) view.setUint16(i * 2, script.charCodeAt(i), true);
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+}
+
+// ============================================================
 // Generate
 // ============================================================
 function generatePayload() {
@@ -476,107 +326,81 @@ function generatePayload() {
     const branch     = document.getElementById('branch').value.trim();
     const deviceType = document.getElementById('deviceType').value;
     const province   = document.getElementById('province').value;
-    const fullBranch = `${branch}-${deviceType}`;
-    const configJson = `{"BU":"${bu}","BranchID":"${fullBranch}","Province":"${province}"}`;
 
-    // ── NEW INSTALL v3.1.0 ──
-    const title = 'New Install — v3.1.0';
-    const steps = ['Write Config', 'Download & Verify Files', 'Setup Tasks', 'ForceFullSync', 'Done ✓'];
-    const note  = 'Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง';
+    // สร้าง PS script แต่ละบรรทัด
+    const lines = [];
+    lines.push("$d = 'C:\\IT_Support'");
+    lines.push("New-Item -ItemType Directory -Force -Path $d | Out-Null");
+    // Config — ใช้ string interpolation จาก JS ตรงนี้
+    lines.push("$cfg = [ordered]@{ BU='" + bu + "'; BranchID='" + branch + "'; DeviceType='" + deviceType + "'; Province='" + province + "' }");
+    lines.push("[IO.File]::WriteAllText(($d+'\\SystemConfig.json'), ($cfg|ConvertTo-Json), [Text.Encoding]::UTF8)");
+    // Get-SAMFile function — ใช้ single quote ทั้งหมด หลีก $i: และ quote ซ้อน
+    lines.push("function Get-SAMFile($url,$out,$minKB=5) {");
+    lines.push("  for($i=1;$i -le 3;$i++) {");
+    lines.push("    try { iwr $url -OutFile $out -UseBasicParsing -TimeoutSec 60 -EA Stop }");
+    lines.push("    catch { Write-Host ('DL fail '+$i+': '+$url); Start-Sleep 10; continue }");
+    lines.push("    if((Test-Path $out) -and (Get-Item $out).Length -ge ($minKB*1KB)) {");
+    lines.push("      Write-Host ('OK: '+(Split-Path $out -Leaf)+' ('+[math]::Round((Get-Item $out).Length/1KB)+'KB)'); return $true }");
+    lines.push("    Write-Host ('File too small, retry '+$i)");
+    lines.push("  }");
+    lines.push("  Write-Host ('FAILED: '+$url); return $false");
+    lines.push("}");
+    // Download ทีละไฟล์
+    lines.push("$ok = $true");
+    lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.scheduler + "' ($d+'\\SAM_Scheduler.ps1') 5)");
+    lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.agent     + "' ($d+'\\SAM_Agent.ps1')     20)");
+    lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.update    + "' ($d+'\\SAM_Update.ps1')    5)");
+    lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.smartctl  + "' ($d+'\\smartctl.exe')      500)");
+    lines.push("if(-not $ok) { Write-Host 'ERROR: Download failed. Abort.'; exit 1 }");
+    lines.push("Write-Host 'All files verified OK'");
+    lines.push("& ($d+'\\SAM_Scheduler.ps1') -Setup");
+    lines.push("& ($d+'\\SAM_Agent.ps1') -Silent -ForceFullSync");
 
-    // UTF-16LE Base64 สำหรับ PowerShell -EncodedCommand
-    function toPSEncoded(script) {
-        const buf = new ArrayBuffer(script.length * 2);
-        const view = new DataView(buf);
-        for (let i = 0; i < script.length; i++) view.setUint16(i * 2, script.charCodeAt(i), true);
-        const bytes = new Uint8Array(buf);
-        let bin = '';
-        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-        return btoa(bin);
-    }
-
-    const installScript = [
-        `$d = 'C:\\IT_Support'`,
-            `New-Item -ItemType Directory -Force -Path $d | Out-Null`,
-            // เขียน Config
-            `$cfg = [ordered]@{ BU='${bu}'; BranchID='${branch}'; DeviceType='${deviceType}'; Province='${province}' }`,
-            `[IO.File]::WriteAllText(($d+'\\SystemConfig.json'), ($cfg|ConvertTo-Json), [Text.Encoding]::UTF8)`,
-            // function download + verify
-            `function Get-SAMFile($url,$out,$minKB=5) {`,
-            `  for($i=1;$i -le 3;$i++) {`,
-            `    try { iwr $url -OutFile $out -UseBasicParsing -TimeoutSec 60 -EA Stop } catch { Write-Host "DL fail $i: $url"; Start-Sleep 10; continue }`,
-            `    if((Test-Path $out) -and (Get-Item $out).Length -ge $minKB*1KB) { Write-Host "OK: $(Split-Path $out -Leaf) ($([math]::Round((Get-Item $out).Length/1KB))KB)"; return $true }`,
-            `    Write-Host "File too small, retry $i"`,
-            `  }`,
-            `  Write-Host "FAILED: $url"; return $false`,
-            `}`,
-            // download ทีละไฟล์พร้อมตรวจสอบ
-            `$ok = $true`,
-            `$ok = $ok -and (Get-SAMFile '${URLS.scheduler}' ($d+'\\SAM_Scheduler.ps1') 5)`,
-            `$ok = $ok -and (Get-SAMFile '${URLS.agent}'     ($d+'\\SAM_Agent.ps1')     20)`,
-            `$ok = $ok -and (Get-SAMFile '${URLS.update}'    ($d+'\\SAM_Update.ps1')    5)`,
-            `$ok = $ok -and (Get-SAMFile '${URLS.smartctl}'  ($d+'\\smartctl.exe')      500)`,
-            // ตรวจว่าไฟล์หลักครบก่อน setup
-            `if(-not $ok) { Write-Host 'ERROR: Some files failed to download. Abort.'; exit 1 }`,
-            `Write-Host 'All files verified OK'`,
-            // setup tasks + run agent
-            `& ($d+'\\SAM_Scheduler.ps1') -Setup`,
-            `& ($d+'\\SAM_Agent.ps1') -Silent -ForceFullSync`
-        ].join('\n');
-
-    const encoded = toPSEncoded(installScript);
-    const cmd = `powershell -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
+    const script  = lines.join("\n");
+    const encoded = toPSEncoded(script);
+    const cmd     = "powershell -ExecutionPolicy Bypass -EncodedCommand " + encoded;
 
     // Render
-    const titleEl = document.getElementById('result-title'); if(titleEl) titleEl.textContent = title;
-    document.getElementById('note-text').innerHTML = note;
+    document.getElementById('result-title').textContent = 'New Install — v3.1.0';
+    document.getElementById('note-text').innerHTML = 'Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง';
     document.getElementById('cmdOutput').textContent = cmd;
 
-    // Step pills
-    const pillsEl = document.getElementById('stepPills');
-    pillsEl.innerHTML = steps.map(s => `<div class="step-pill">${s}</div>`).join('');
+    const steps = ['Write Config','Download & Verify','Setup Tasks','ForceFullSync','Done ✓'];
+    document.getElementById('stepPills').innerHTML = steps.map(s => '<div class="step-pill">'+s+'</div>').join('');
 
-    // Show result
     const card = document.getElementById('resultCard');
     card.classList.add('visible');
     setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
 
-    // Reset copy button
     const copyBtn = document.getElementById('copyBtn');
     copyBtn.classList.remove('copied');
-    copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy to Clipboard`;
+    copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy to Clipboard';
 }
 
 // ============================================================
 // Copy
 // ============================================================
 function copyToClipboard() {
-    const cmd = document.getElementById('cmdOutput').textContent;
+    const cmd     = document.getElementById('cmdOutput').textContent;
     const copyBtn = document.getElementById('copyBtn');
-
     const success = () => {
         copyBtn.classList.add('copied');
-        copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Copied!`;
+        copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Copied!';
         showToast();
         setTimeout(() => {
             copyBtn.classList.remove('copied');
-            copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy to Clipboard`;
+            copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy to Clipboard';
         }, 2500);
     };
-
     if (navigator.clipboard) {
         navigator.clipboard.writeText(cmd).then(success).catch(() => fallbackCopy(cmd, success));
-    } else {
-        fallbackCopy(cmd, success);
-    }
+    } else { fallbackCopy(cmd, success); }
 }
 
 function fallbackCopy(text, cb) {
     const el = document.createElement('textarea');
-    el.value = text;
-    el.style.cssText = 'position:fixed;opacity:0;';
-    document.body.appendChild(el);
-    el.select();
+    el.value = text; el.style.cssText = 'position:fixed;opacity:0;';
+    document.body.appendChild(el); el.select();
     try { document.execCommand('copy'); cb(); } catch(e) {}
     document.body.removeChild(el);
 }
