@@ -62,7 +62,49 @@ function Get-FieldHash {
         $MD5.ComputeHash([Text.Encoding]::UTF8.GetBytes($Value))
     ) -replace '-'
 }
+# ==========================================
+# MONITOR DETECTION
+# ==========================================
+function Get-MonitorInfo {
+    try {
+        $Monitors = Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorID -ErrorAction Stop
+        if (-not $Monitors -or $Monitors.Count -eq 0) { return $null }
 
+        $MonitorList = @()
+        foreach ($M in $Monitors) {
+            # แปลง byte array → string (กรอง null bytes)
+            $Manufacturer = if ($M.ManufacturerName) {
+                (($M.ManufacturerName | Where-Object { $_ -ne 0 -and $_ -ne $null } | ForEach-Object { [char]$_ }) -join '').Trim()
+            } else { "" }
+
+            $Model = if ($M.UserFriendlyName) {
+                (($M.UserFriendlyName | Where-Object { $_ -ne 0 -and $_ -ne $null } | ForEach-Object { [char]$_ }) -join '').Trim()
+            } else { "" }
+
+            $Serial = if ($M.SerialNumberID) {
+                (($M.SerialNumberID | Where-Object { $_ -ne 0 -and $_ -ne $null } | ForEach-Object { [char]$_ }) -join '').Trim()
+            } else { "" }
+
+            # ตรวจสอบ empty → N/A
+            if ([string]::IsNullOrWhiteSpace($Manufacturer)) { $Manufacturer = "N/A" }
+            if ([string]::IsNullOrWhiteSpace($Model))        { $Model        = "N/A" }
+            if ([string]::IsNullOrWhiteSpace($Serial))       { $Serial       = "N/A" }
+
+            # Year-Week
+            $Year = if ($M.YearOfManufacture -and $M.YearOfManufacture -gt 1990) { $M.YearOfManufacture } else { $null }
+            $Week = if ($M.WeekOfManufacture -and $M.WeekOfManufacture -gt 0 -and $M.WeekOfManufacture -le 53) { "{0:D2}" -f [int]$M.WeekOfManufacture } else { $null }
+            $YearWeek = if ($Year -and $Week) { "$Year-$Week" } else { "N/A" }
+
+            $MonitorList += "$Manufacturer|$Model|$Serial|$YearWeek"
+        }
+
+        if ($MonitorList.Count -eq 0) { return $null }
+        return ($MonitorList -join ' ; ')
+    } catch {
+        Write-SAMLog "Monitor detection failed: $($_.Exception.Message)" -Level "WARN"
+        return $null
+    }
+}
 # ==========================================
 # HIDE CONSOLE — ซ่อนเสมอถ้าไม่มี console parent
 # ==========================================
@@ -231,7 +273,7 @@ if (-not (Test-Path $ConfigFile)) {
     $txtBranch.ForeColor=[System.Drawing.Color]::White; $form.Controls.Add($txtBranch)
 
     Add-Label "2. Device Type :" 30 120
-    $comboType = Add-ComboBox 30 145 @("Pos","Pos2","Pos3","Office","Office2","NB","Other","AIO","PC")
+    $comboType = Add-ComboBox 30 145 @("Pos","Pos2","Pos3","Office","Office2","NB","Other","AIO","MiniPC","PC")
     Add-Label "3. Business Unit :" 30 180
     $comboBU = Add-ComboBox 30 205 @("Station","OLP","Punthai","PunthaiFC","MaxMart","ATL","Oil depot","AutoBacs","Subway","CoffeeWorld","Office","LPG plant","Other")
     Add-Label "4. Province (จังหวัด) :" 30 240
@@ -377,6 +419,10 @@ if ([string]::IsNullOrWhiteSpace($RawSN) -or $RawSN -match "(?i)To be filled|O\.
     $UUID = (Get-CimInstance Win32_ComputerSystemProduct).UUID
     $SafeSerial = "HWID-" + ($UUID.Substring(0,18))
 } else { $SafeSerial = $RawSN }
+
+# Monitor Info (Connected Displays)
+$MonitorConnect = Get-MonitorInfo
+Write-SAMLog "Monitor detected: $(if($MonitorConnect){$MonitorConnect}else{'None'})"
 
 # OS
 $OS      = Get-CimInstance Win32_OperatingSystem
@@ -655,6 +701,7 @@ $CurrentData = [ordered]@{
     Manufacturer   = $CompSys.Manufacturer
     Model          = $CompSys.Model
     SerialNumber   = $SafeSerial
+    MonitorSN      = $MonitorConnect
     OSVersion      = $CombOS
     WinUpdate      = $CloudWU
     BootPerf       = $CloudBoot
@@ -770,7 +817,7 @@ $Headers = @{
 # กรองเฉพาะ field ที่มีใน Supabase schema (ป้องกัน 400 Bad Request)
 $SupabaseFields = @(
     "BU","BranchID","DeviceType","Province","ComputerName","ComputerDesc","Manufacturer","Model",
-    "SerialNumber","OSVersion","WinUpdate","BootPerf","CPU","RAM","IPAddress","MACAddress",
+    "SerialNumber","MonitorSN","OSVersion","WinUpdate","BootPerf","CPU","RAM","IPAddress","MACAddress",
     "Antivirus1","Antivirus2","Firewall","DiskHealth","DriveSpace","BitLocker","StabilityScore",
     "Uptime","PendingReboot","TeamViewerID","AnyDeskID","ActiveUsers","AllPrinters","AllSoftware",
     "AgentVersion","Type","ChangedFields","updated_at","LastSyncTH"
@@ -857,9 +904,27 @@ function Build-HTMLReport {
     $H += "<h1>System Audit — $env:COMPUTERNAME<br><span style='font-size:0.6em;color:#666;'>BU:$BU | Branch:$BranchID | Prov:$Province | Agent:v$SAM_VERSION | Sync:$SyncType</span></h1>"
 
     $H += "<h2>System Information</h2><table>"
+
+    # Display Name Mapping (Report label ≠ Supabase column)
+    $DisplayNameMap = @{
+        "MonitorSN" = "MonitorConnect"
+        # เพิ่ม mapping อื่นๆ ได้ในอนาคต
+    }
+
     foreach ($K in $CurrentData.Keys | Where-Object { $_ -notin @("updated_at","LastSyncTH","Type","ChangedFields","AllSoftware") }) {
         $MarkClass = if ($ChangedFields -contains $K) { " class='delta'" } else { "" }
-        $H += "<tr><td$MarkClass>$K</td><td$MarkClass>$($CurrentData[$K])</td></tr>"
+
+        # ใช้ Display Name ถ้ามีใน map, มิฉะนั้นใช้ key เดิม
+        $DisplayKey = if ($DisplayNameMap.ContainsKey($K)) { $DisplayNameMap[$K] } else { $K }
+
+        # จัดการค่า null → แสดง "N/A"
+        $DisplayVal = if ($null -eq $CurrentData[$K] -or [string]::IsNullOrWhiteSpace($CurrentData[$K].ToString())) {
+            "N/A"
+        } else {
+            $CurrentData[$K]
+        }
+
+        $H += "<tr><td$MarkClass>$DisplayKey</td><td$MarkClass>$DisplayVal</td></tr>"
     }
     $H += "</table>"
 
