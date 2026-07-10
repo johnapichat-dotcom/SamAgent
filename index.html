@@ -356,6 +356,7 @@ function generatePayload() {
     lines.push("& ($d+'\\SAM_Scheduler.ps1') -Setup");
     lines.push("& ($d+'\\SAM_Agent.ps1') -Silent -ForceFullSync");
 
+
     const script  = lines.join("\n");
     const encoded = toPSEncoded(script);
     const cmd     = "powershell -ExecutionPolicy Bypass -EncodedCommand " + encoded;
