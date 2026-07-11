@@ -20,28 +20,171 @@
             --c-muted:    #64748b;
         }
         * { box-sizing: border-box; }
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
         body {
             background-color: var(--c-bg);
             color: var(--c-text);
             font-family: 'Segoe UI', system-ui, sans-serif;
             min-height: 100vh;
+            position: relative;
         }
+
+        /* ===== Video Background ===== */
+        #videoBg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 0;
+            filter: brightness(var(--video-brightness, 0.6)) 
+                    contrast(var(--video-contrast, 1.1));
+            opacity: var(--video-opacity, 0.4);
+        }
+
+        /* Grid overlay */
         body::before {
             content: '';
-            position: fixed; inset: 0; z-index: 0;
+            position: fixed;
+            inset: 0;
+            z-index: 1;
             background-image:
                 linear-gradient(rgba(0,229,255,.03) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(0,229,255,.03) 1px, transparent 1px);
             background-size: 40px 40px;
             pointer-events: none;
         }
+
+        /* Content wrapper */
         .main-wrap {
-            position: relative; z-index: 1;
-            display: flex; flex-direction: column;
+            position: relative;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
             align-items: center;
             padding: 2rem 1rem 4rem;
             gap: 1.5rem;
         }
+
+        /* ===== Controls Panel ===== */
+        .controls-panel {
+            position: fixed;
+            top: 1rem;
+            left: 1rem;
+            z-index: 10;
+            background: rgba(22, 22, 22, 0.95);
+            border: 1px solid rgba(0, 229, 255, 0.3);
+            border-radius: 10px;
+            padding: 1rem;
+            min-width: 260px;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
+        }
+        .controls-panel.hidden { display: none; }
+        .ctrl-title {
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            color: var(--c-accent);
+            text-transform: uppercase;
+            margin-bottom: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .ctrl-item {
+            margin-bottom: 0.9rem;
+        }
+        .ctrl-label {
+            font-size: 0.7rem;
+            color: #94a3b8;
+            font-weight: 600;
+            margin-bottom: 0.3rem;
+            display: flex;
+            justify-content: space-between;
+        }
+        .ctrl-value {
+            color: var(--c-accent);
+            font-weight: 700;
+            font-size: 0.7rem;
+        }
+        input[type="range"] {
+            width: 100%;
+            height: 5px;
+            border-radius: 3px;
+            background: #2d2d2d;
+            outline: none;
+            -webkit-appearance: none;
+            cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--c-accent);
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--c-accent);
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
+        }
+
+        .color-picker-group {
+            display: flex;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+        .color-swatch {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .color-swatch:hover { transform: scale(1.1); }
+        .color-swatch.active {
+            border-color: var(--c-text);
+            box-shadow: 0 0 12px rgba(0, 229, 255, 0.5);
+        }
+
+        .btn-toggle {
+            width: 100%;
+            background: var(--c-panel2);
+            border: 1px solid #333;
+            color: var(--c-text);
+            padding: 0.5rem 0.7rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-toggle:hover {
+            border-color: var(--c-accent);
+            color: var(--c-accent);
+        }
+        .btn-toggle.active {
+            background: rgba(0, 229, 255, 0.15);
+            border-color: var(--c-accent);
+            color: var(--c-accent);
+        }
+
+        /* Header */
         .sam-header { text-align: center; width: 100%; max-width: 580px; }
         .sam-title {
             font-size: 1.6rem; font-weight: 800; letter-spacing: .15em;
@@ -58,11 +201,16 @@
         }
         .ver-dot { width:7px; height:7px; border-radius:50%; background:var(--c-ok); animation: pulse 2s infinite; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+        /* Card */
         .card {
             width: 100%; max-width: 580px;
-            background: var(--c-panel); border: 1px solid rgba(0,229,255,.18);
-            border-radius: 12px; padding: 1.5rem;
-            box-shadow: 0 0 30px rgba(0,229,255,.05);
+            background: rgba(22, 22, 22, 0.92); 
+            border: 1px solid rgba(0,229,255,.18);
+            border-radius: 12px; 
+            padding: 1.5rem;
+            box-shadow: 0 0 30px rgba(0,229,255,.1), 0 0 60px rgba(0,0,0,.6);
+            backdrop-filter: blur(6px);
         }
         .sec-label {
             font-size: .7rem; font-weight: 700; letter-spacing: .12em;
@@ -70,6 +218,7 @@
             margin-bottom: .9rem; display: flex; align-items: center; gap: .5rem;
         }
         .sec-label::after { content: ''; flex: 1; height: 1px; background: rgba(255,255,255,.07); }
+
         label.field-label { display: block; font-size: .78rem; font-weight: 600; color: #94a3b8; margin-bottom: .4rem; }
         .field-row { margin-bottom: 1.1rem; }
         select, input[type="text"] {
@@ -82,8 +231,10 @@
             border-color: var(--c-accent); box-shadow: 0 0 0 3px rgba(0,229,255,.1);
         }
         select option { background: #1e1e1e; }
+
         .pair-row { display: grid; grid-template-columns: 1fr auto; gap: .5rem; }
         .pair-row select { width: 120px; }
+
         .btn-generate {
             width: 100%; background: linear-gradient(135deg, #00e5ff, #0072ff);
             color: #000; font-weight: 800; font-size: .85rem; letter-spacing: .12em;
@@ -94,24 +245,34 @@
         }
         .btn-generate:hover { box-shadow: 0 0 35px rgba(0,229,255,.45); transform: translateY(-1px); }
         .btn-generate:active { transform: translateY(0); }
+
+        /* Result */
         .result-card {
-            width: 100%; max-width: 580px; background: var(--c-panel);
-            border: 1px solid rgba(0,229,255,.2); border-radius: 12px; padding: 1.4rem;
-            box-shadow: 0 0 25px rgba(0,229,255,.08); display: none;
+            width: 100%; max-width: 580px; 
+            background: rgba(22, 22, 22, 0.92);
+            border: 1px solid rgba(0,229,255,.2); 
+            border-radius: 12px; 
+            padding: 1.4rem;
+            box-shadow: 0 0 25px rgba(0,229,255,.08), 0 0 50px rgba(0,0,0,.6); 
+            display: none;
+            backdrop-filter: blur(6px);
         }
         .result-card.visible { display: block; animation: slideUp .3s ease; }
         @keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+
         .result-label {
             font-size: .7rem; font-weight: 700; letter-spacing: .1em;
             color: var(--c-accent); text-transform: uppercase;
             margin-bottom: .6rem; display: flex; align-items: center; gap: .4rem;
         }
+
         .step-pills { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .8rem; }
         .step-pill {
             font-size: .68rem; padding: .2rem .6rem; border-radius: 999px;
             background: rgba(0,229,255,.08); border: 1px solid rgba(0,229,255,.2);
             color: var(--c-accent); font-weight: 600;
         }
+
         .cmd-box {
             background: #080808; border: 1px solid #1e1e1e; border-radius: 8px;
             padding: 1rem 1.1rem;
@@ -122,6 +283,14 @@
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #111; }
         ::-webkit-scrollbar-thumb { background: rgba(0,229,255,.3); border-radius: 4px; }
+
+        .deploy-note {
+            font-size: .72rem; color: var(--c-warn);
+            background: rgba(245,158,11,.06); border: 1px solid rgba(245,158,11,.2);
+            border-radius: 6px; padding: .5rem .75rem; margin-bottom: .85rem;
+            display: flex; align-items: flex-start; gap: .4rem;
+        }
+
         .btn-copy {
             width: 100%; margin-top: .85rem; background: var(--c-panel2);
             border: 1px solid #333; color: var(--c-text); font-size: .82rem;
@@ -131,12 +300,7 @@
         }
         .btn-copy:hover { border-color: var(--c-accent); color: var(--c-accent); }
         .btn-copy.copied { background: rgba(34,197,94,.12); border-color: var(--c-ok); color: var(--c-ok); }
-        .deploy-note {
-            font-size: .72rem; color: var(--c-warn);
-            background: rgba(245,158,11,.06); border: 1px solid rgba(245,158,11,.2);
-            border-radius: 6px; padding: .5rem .75rem; margin-bottom: .85rem;
-            display: flex; align-items: flex-start; gap: .4rem;
-        }
+
         #toast {
             position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--c-ok);
             color: #fff; padding: .75rem 1.2rem; border-radius: 8px;
@@ -147,14 +311,82 @@
             transition: all .3s cubic-bezier(.34,1.56,.64,1); pointer-events: none;
         }
         #toast.show { transform: translateY(0); opacity: 1; }
+
         .footer { font-size: .67rem; color: #2d2d2d; text-align: center; letter-spacing: .08em; }
+
         @keyframes shake {
             0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-6px)} 40%,80%{transform:translateX(6px)}
         }
         .shake { animation: shake .35s ease; border-color: var(--c-error) !important; }
+
+        /* Mobile responsive */
+        @media (max-width: 768px) {
+            .controls-panel {
+                top: auto;
+                bottom: 1rem;
+                left: 1rem;
+                right: 1rem;
+                min-width: unset;
+                width: calc(100% - 2rem);
+            }
+            .main-wrap {
+                padding-top: 1.5rem;
+            }
+        }
     </style>
 </head>
 <body>
+
+<!-- Video Background -->
+<video id="videoBg" autoplay muted loop>
+    <source src="https://github.com/johnapichat-dotcom/SamAgent/releases/download/background/matrix.mp4" type="video/mp4">
+</video>
+
+<!-- Controls Panel -->
+<div class="controls-panel">
+    <div class="ctrl-title">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><path d="M12 1v6m0 6v6"/><path d="M4.22 4.22l4.24 4.24m2.12 2.12l4.24 4.24"/><path d="M1 12h6m6 0h6"/><path d="M4.22 19.78l4.24-4.24m2.12-2.12l4.24-4.24"/><path d="M19.78 19.78l-4.24-4.24m-2.12-2.12l-4.24-4.24"/></svg>
+        Background
+    </div>
+
+    <div class="ctrl-item">
+        <div class="ctrl-label">
+            <span>Brightness</span>
+            <span class="ctrl-value" id="brightValue">60%</span>
+        </div>
+        <input type="range" id="brightness" min="0" max="150" value="60">
+    </div>
+
+    <div class="ctrl-item">
+        <div class="ctrl-label">
+            <span>Contrast</span>
+            <span class="ctrl-value" id="contrastValue">110%</span>
+        </div>
+        <input type="range" id="contrast" min="50" max="200" value="110">
+    </div>
+
+    <div class="ctrl-item">
+        <div class="ctrl-label">
+            <span>Opacity</span>
+            <span class="ctrl-value" id="opacityValue">40%</span>
+        </div>
+        <input type="range" id="opacity" min="0" max="100" value="40">
+    </div>
+
+    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(0,229,255,.15);">
+        <div class="ctrl-label" style="margin-bottom: 0.6rem;">Theme Color</div>
+        <div class="color-picker-group">
+            <div class="color-swatch active" style="background: #00e5ff;" onclick="switchTheme('#00e5ff', '#0072ff')"></div>
+            <div class="color-swatch" style="background: #00ff00;" onclick="switchTheme('#00ff00', '#00aa00')"></div>
+            <div class="color-swatch" style="background: #ff00ff;" onclick="switchTheme('#ff00ff', '#aa00ff')"></div>
+            <div class="color-swatch" style="background: #ffaa00;" onclick="switchTheme('#ffaa00', '#ff7700')"></div>
+            <div class="color-swatch" style="background: #0099ff;" onclick="switchTheme('#0099ff', '#0066cc')"></div>
+        </div>
+    </div>
+
+    <button class="btn-toggle" style="margin-top: 1rem;" onclick="toggleControls()">Hide ▲</button>
+</div>
+
 <div class="main-wrap">
 
     <!-- Header -->
@@ -287,6 +519,43 @@ const URLS = {
 };
 
 // ============================================================
+// Video Controls
+// ============================================================
+document.getElementById('brightness').addEventListener('input', function(e) {
+    const val = e.target.value;
+    document.documentElement.style.setProperty('--video-brightness', val / 100);
+    document.getElementById('brightValue').textContent = val + '%';
+});
+
+document.getElementById('contrast').addEventListener('input', function(e) {
+    const val = e.target.value;
+    document.documentElement.style.setProperty('--video-contrast', val / 100);
+    document.getElementById('contrastValue').textContent = val + '%';
+});
+
+document.getElementById('opacity').addEventListener('input', function(e) {
+    const val = e.target.value;
+    document.documentElement.style.setProperty('--video-opacity', val / 100);
+    document.getElementById('opacityValue').textContent = val + '%';
+});
+
+function toggleControls() {
+    const panel = document.querySelector('.controls-panel');
+    const btn = event.target;
+    panel.classList.toggle('hidden');
+    btn.textContent = panel.classList.contains('hidden') ? 'Show ▼' : 'Hide ▲';
+}
+
+function switchTheme(accent, accent2) {
+    document.documentElement.style.setProperty('--c-accent', accent);
+    document.documentElement.style.setProperty('--c-accent2', accent2);
+    
+    // Update color swatches
+    document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+    event.target.classList.add('active');
+}
+
+// ============================================================
 // Validation
 // ============================================================
 function validate() {
@@ -304,7 +573,7 @@ function validate() {
 }
 
 // ============================================================
-// UTF-16LE Base64 encoder สำหรับ PowerShell -EncodedCommand
+// UTF-16LE Base64 encoder
 // ============================================================
 function toPSEncoded(script) {
     const buf  = new ArrayBuffer(script.length * 2);
@@ -327,14 +596,11 @@ function generatePayload() {
     const deviceType = document.getElementById('deviceType').value;
     const province   = document.getElementById('province').value;
 
-    // สร้าง PS script แต่ละบรรทัด
     const lines = [];
     lines.push("$d = 'C:\\IT_Support'");
     lines.push("New-Item -ItemType Directory -Force -Path $d | Out-Null");
-    // Config — ใช้ string interpolation จาก JS ตรงนี้
     lines.push("$cfg = [ordered]@{ BU='" + bu + "'; BranchID='" + branch + "'; DeviceType='" + deviceType + "'; Province='" + province + "' }");
     lines.push("[IO.File]::WriteAllText(($d+'\\SystemConfig.json'), ($cfg|ConvertTo-Json), [Text.Encoding]::UTF8)");
-    // Get-SAMFile function — ใช้ single quote ทั้งหมด หลีก $i: และ quote ซ้อน
     lines.push("function Get-SAMFile($url,$out,$minKB=5) {");
     lines.push("  for($i=1;$i -le 3;$i++) {");
     lines.push("    try { iwr $url -OutFile $out -UseBasicParsing -TimeoutSec 60 -EA Stop }");
@@ -345,7 +611,6 @@ function generatePayload() {
     lines.push("  }");
     lines.push("  Write-Host ('FAILED: '+$url); return $false");
     lines.push("}");
-    // Download ทีละไฟล์
     lines.push("$ok = $true");
     lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.scheduler + "' ($d+'\\SAM_Scheduler.ps1') 5)");
     lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.agent     + "' ($d+'\\SAM_Agent.ps1')     20)");
@@ -356,14 +621,11 @@ function generatePayload() {
     lines.push("& ($d+'\\SAM_Scheduler.ps1') -Setup");
     lines.push("& ($d+'\\SAM_Agent.ps1') -Silent -ForceFullSync");
 
-
     const script  = lines.join("\n");
     const encoded = toPSEncoded(script);
     const cmd     = "powershell -ExecutionPolicy Bypass -EncodedCommand " + encoded;
 
-    // Render
     document.getElementById('result-title').textContent = 'New Install — v3.1.0';
-    document.getElementById('note-text').innerHTML = 'Copy และรันใน <b>Command Prompt (Run as Administrator)</b> บนเครื่องที่ต้องการติดตั้ง';
     document.getElementById('cmdOutput').textContent = cmd;
 
     const steps = ['Write Config','Download & Verify','Setup Tasks','ForceFullSync','Done ✓'];
