@@ -820,7 +820,7 @@ $SupabaseFields = @(
     "SerialNumber","MonitorSN","OSVersion","WinUpdate","BootPerf","CPU","RAM","IPAddress","MACAddress",
     "Antivirus1","Antivirus2","Firewall","DiskHealth","DriveSpace","BitLocker","StabilityScore",
     "Uptime","PendingReboot","TeamViewerID","AnyDeskID","ActiveUsers","AllPrinters","AllSoftware",
-    "AgentVersion","Type","ChangedFields","updated_at","LastSyncTH"
+    "AgentVersion","Type","updated_at","LastSyncTH"
 )
 $FilteredPayload = [ordered]@{}
 foreach ($k in $PayloadData.Keys) {
