@@ -18,7 +18,7 @@ $ErrorActionPreference = "Stop"
 # ==========================================
 # CONSTANTS
 # ==========================================
-$SAM_VERSION     = "3.1.4"
+$SAM_VERSION     = "3.1.1"
 $WorkDir         = "C:\IT_Support"
 $LogDir          = "$WorkDir\SAM_Logs"
 $LogFile         = "$LogDir\SAM_Scheduler.log"
