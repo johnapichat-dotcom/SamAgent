@@ -1,0 +1,207 @@
+﻿# ======================================================
+#  IE MODE SETUP FOR MICROSOFT EDGE - ALL IN ONE
+#  Run as Administrator
+# ======================================================
+
+# Force UTF-8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$ErrorActionPreference = "Stop"
+
+# Check Admin
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "ERROR: Please run as Administrator" -ForegroundColor Red
+    pause
+    exit
+}
+
+Clear-Host
+Write-Host ""
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host "  CONFIGURE IE MODE FOR EDGE (AUTO)" -ForegroundColor Cyan
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host ""
+
+$xmlPath = "C:\IE_Mode\site-list.xml"
+$regPath = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
+$errors = 0
+
+# ======================================================
+#  STEP 1: CREATE FOLDER
+# ======================================================
+Write-Host "[STEP 1] Create folder C:\IE_Mode..." -ForegroundColor Yellow
+try {
+    if (-not (Test-Path "C:\IE_Mode")) {
+        New-Item -Path "C:\IE_Mode" -ItemType Directory -Force | Out-Null
+    }
+    Write-Host "  PASS - Folder ready" -ForegroundColor Green
+} catch {
+    Write-Host "  FAIL - $($_.Exception.Message)" -ForegroundColor Red
+    $errors++
+}
+Write-Host ""
+
+# ======================================================
+#  STEP 2: CREATE site-list.xml
+# ======================================================
+Write-Host "[STEP 2] Create site-list.xml..." -ForegroundColor Yellow
+
+$xmlContent = @"
+<?xml version="1.0" encoding="utf-8"?>
+<site-list version="1">
+
+  <!-- HRM System -->
+  <site url="http://hrm.pt.co.th:7778">
+    <open-in>IE11</open-in>
+  </site>
+
+  <!-- Internal IP -->
+  <site url="http://10.200.10.210">
+    <open-in>IE11</open-in>
+  </site>
+
+  <!--
+  ============================================
+  How to add new website:
+  Copy the code below and change the URL
+
+  <site url="http://example.com">
+    <open-in>IE11</open-in>
+  </site>
+
+  Add before </site-list>
+  Close and reopen Edge to apply immediately
+  Or wait 4 hours for auto refresh
+  ============================================
+  -->
+
+</site-list>
+"@
+
+try {
+    $xmlContent | Out-File -FilePath $xmlPath -Encoding UTF8 -Force
+    Write-Host "  PASS - site-list.xml created" -ForegroundColor Green
+} catch {
+    Write-Host "  FAIL - $($_.Exception.Message)" -ForegroundColor Red
+    $errors++
+}
+Write-Host ""
+
+# ======================================================
+#  STEP 3: KILL EDGE
+# ======================================================
+Write-Host "[STEP 3] Kill Microsoft Edge..." -ForegroundColor Yellow
+Get-Process -Name "msedge", "msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Write-Host "  PASS - Edge terminated" -ForegroundColor Green
+Write-Host ""
+
+# ======================================================
+#  STEP 4: APPLY REGISTRY (HKLM - ALL USERS)
+# ======================================================
+Write-Host "[STEP 4] Apply Registry (HKLM - All Users)..." -ForegroundColor Yellow
+
+try {
+    if (-not (Test-Path $regPath)) {
+        New-Item -Path $regPath -Force | Out-Null
+    }
+
+    Set-ItemProperty -Path $regPath -Name "InternetExplorerIntegrationLevel" -Value 1 -Type DWord -Force
+    Write-Host "  PASS - IntegrationLevel = 1" -ForegroundColor Green
+
+    Set-ItemProperty -Path $regPath -Name "InternetExplorerIntegrationSiteList" -Value "file:///C:/IE_Mode/site-list.xml" -Type String -Force
+    Write-Host "  PASS - SiteList = file:///C:/IE_Mode/site-list.xml" -ForegroundColor Green
+
+    Set-ItemProperty -Path $regPath -Name "InternetExplorerIntegrationSiteListRefreshInterval" -Value 14400 -Type DWord -Force
+    Write-Host "  PASS - RefreshInterval = 14400 (4 hours)" -ForegroundColor Green
+} catch {
+    Write-Host "  FAIL - $($_.Exception.Message)" -ForegroundColor Red
+    $errors++
+}
+Write-Host ""
+
+# ======================================================
+#  STEP 4.1: CLEAR CACHE
+# ======================================================
+Write-Host "[STEP 4.1] Clear Edge cache..." -ForegroundColor Yellow
+$cachePaths = @(
+    "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\EnterpriseSiteList.xml",
+    "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\SiteList.xml"
+)
+foreach ($p in $cachePaths) {
+    if (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue }
+}
+Write-Host "  PASS - Cache cleared" -ForegroundColor Green
+Write-Host ""
+
+# ======================================================
+#  STEP 5: VERIFICATION
+# ======================================================
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host "  VERIFICATION" -ForegroundColor Cyan
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host ""
+
+$checks = @(
+    @{ Name = "Registry - IntegrationLevel"; Key = "InternetExplorerIntegrationLevel" },
+    @{ Name = "Registry - SiteList"; Key = "InternetExplorerIntegrationSiteList" },
+    @{ Name = "Registry - RefreshInterval"; Key = "InternetExplorerIntegrationSiteListRefreshInterval" }
+)
+
+$checkNum = 1
+foreach ($check in $checks) {
+    Write-Host "[CHECK $checkNum] $($check.Name)..." -ForegroundColor Yellow
+    try {
+        $val = Get-ItemPropertyValue -Path $regPath -Name $check.Key -ErrorAction Stop
+        Write-Host "  PASS - Value: $val" -ForegroundColor Green
+    } catch {
+        Write-Host "  FAIL - Key not found" -ForegroundColor Red
+        $errors++
+    }
+    $checkNum++
+    Write-Host ""
+}
+
+Write-Host "[CHECK $checkNum] XML File..." -ForegroundColor Yellow
+if (Test-Path $xmlPath) {
+    Write-Host "  PASS - $xmlPath" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  --- URLs in site-list.xml ---" -ForegroundColor DarkGray
+    Select-String -Path $xmlPath -Pattern 'url=' | ForEach-Object {
+        Write-Host "  $($_.Line.Trim())" -ForegroundColor DarkGray
+    }
+    Write-Host "  --- End ---" -ForegroundColor DarkGray
+} else {
+    Write-Host "  FAIL - File not found" -ForegroundColor Red
+    $errors++
+}
+Write-Host ""
+
+# ======================================================
+#  FINAL RESULT
+# ======================================================
+Write-Host "============================================" -ForegroundColor Cyan
+if ($errors -eq 0) {
+    Write-Host "  ALL CHECKS PASSED - IE Mode Ready!" -ForegroundColor Green
+    Write-Host "" 
+    Write-Host "  Open Edge and go to:" -ForegroundColor White
+    Write-Host "    edge://policy" -ForegroundColor White
+    Write-Host "" 
+    Write-Host "  Test URLs:" -ForegroundColor White
+    Write-Host "    http://hrm.pt.co.th:7778" -ForegroundColor White
+    Write-Host "    http://10.200.10.210" -ForegroundColor White
+} else {
+    Write-Host "  SOME CHECKS FAILED ($errors errors)" -ForegroundColor Red
+    Write-Host "  Please check errors above" -ForegroundColor Red
+}
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host ""
+
+# ======================================================
+#  STEP 6: EDIT site-list.xml (FUTURE)
+# ======================================================
+Write-Host "To add more websites in the future:" -ForegroundColor White
+Write-Host "  1. Open C:\IE_Mode\site-list.xml with Notepad" -ForegroundColor White
+Write-Host "  2. Add new <site> block before </site-list>" -ForegroundColor White
+Write-Host "  3. Close and reopen Edge" -ForegroundColor White
+Write-Host ""
+pause
