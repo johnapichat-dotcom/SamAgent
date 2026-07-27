@@ -71,6 +71,7 @@ $xmlContent = @"
 
   Add before </site-list>
   Close and reopen Edge to apply immediately
+  Check   edge://policy  and    edge://compat/enterprise   if needed
   Or wait 4 hours for auto refresh
   ============================================
   -->
