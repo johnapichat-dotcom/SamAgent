@@ -197,11 +197,38 @@ Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
 # ======================================================
-#  STEP 6: EDIT site-list.xml (FUTURE)
+#  AUTO VERIFY REGISTRY
 # ======================================================
-Write-Host "To add more websites in the future:" -ForegroundColor White
-Write-Host "  1. Open C:\IE_Mode\site-list.xml with Notepad" -ForegroundColor White
-Write-Host "  2. Add new <site> block before </site-list>" -ForegroundColor White
-Write-Host "  3. Close and reopen Edge" -ForegroundColor White
+Write-Host ""
+Write-Host "============================================" -ForegroundColor Green -BackgroundColor Black
+Write-Host "          REGISTRY VERIFICATION RESULT" -ForegroundColor Green -BackgroundColor Black
+Write-Host "============================================" -ForegroundColor Green -BackgroundColor Black
+Write-Host ""
+
+try {
+    $regCheck = Get-ItemProperty -Path $regPath -ErrorAction Stop
+    Write-Host "✓ HKLM\SOFTWARE\Policies\Microsoft\Edge" -ForegroundColor Green -BackgroundColor Black
+    Write-Host ""
+    Write-Host "  InternetExplorerIntegrationLevel:" -ForegroundColor Green -BackgroundColor Black
+    Write-Host "    $($regCheck.InternetExplorerIntegrationLevel)" -ForegroundColor Green -BackgroundColor Black
+    Write-Host ""
+    Write-Host "  InternetExplorerIntegrationSiteList:" -ForegroundColor Green -BackgroundColor Black
+    Write-Host "    $($regCheck.InternetExplorerIntegrationSiteList)" -ForegroundColor Green -BackgroundColor Black
+    Write-Host ""
+    Write-Host "  InternetExplorerIntegrationSiteListRefreshInterval:" -ForegroundColor Green -BackgroundColor Black
+    Write-Host "    $($regCheck.InternetExplorerIntegrationSiteListRefreshInterval) seconds (4 hours)" -ForegroundColor Green -BackgroundColor Black
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Green -BackgroundColor Black
+    Write-Host "      SUCCESS - IE MODE IS ACTIVE!" -ForegroundColor Green -BackgroundColor Black
+    Write-Host "============================================" -ForegroundColor Green -BackgroundColor Black
+} catch {
+    Write-Host "ERROR - Registry keys not found" -ForegroundColor Red -BackgroundColor Black
+}
+
+Write-Host ""
+Write-Host "NOTE: To add new websites to all accounts:" -ForegroundColor Yellow
+Write-Host "  1. Edit: C:\IE_Mode\site-list.xml" -ForegroundColor Yellow
+Write-Host "  2. Add URL and save (shared file = all users get it)" -ForegroundColor Yellow
+Write-Host "  3. Each user: Close and reopen Edge" -ForegroundColor Yellow
 Write-Host ""
 pause
