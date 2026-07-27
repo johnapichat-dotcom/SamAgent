@@ -120,9 +120,86 @@ try {
 Write-Host ""
 
 # ======================================================
-#  STEP 4.1: CLEAR CACHE
+#  STEP 4.1: CREATE auto-refresh.bat
 # ======================================================
-Write-Host "[STEP 4.1] Clear Edge cache..." -ForegroundColor Yellow
+Write-Host "[STEP 4.1] Create auto-refresh.bat in C:\IE_Mode..." -ForegroundColor Yellow
+
+$batContent = @'
+@echo off
+chcp 65001 >nul 2>&1
+color 0A
+echo.
+echo ============================================
+echo   IE MODE - AUTO REFRESH
+echo ============================================
+echo.
+
+REM Check Admin
+>nul 2>&1 "%SYSTEMROOT%\system32\cacls.exe" "%SYSTEMROOT%\system32\config\system"
+if %errorlevel% neq 0 (
+    echo ERROR: Please run as Administrator
+    echo.
+    pause
+    exit /b
+)
+
+echo [1] Closing Microsoft Edge...
+taskkill /IM msedge.exe /F 2>nul
+taskkill /IM msedgewebview2.exe /F 2>nul
+echo     OK - Edge closed
+echo.
+
+echo [2] Clearing Edge cache...
+del /q "%LocalAppData%\Microsoft\Edge\User Data\Default\EnterpriseSiteList.xml" 2>nul
+del /q "%LocalAppData%\Microsoft\Edge\User Data\Default\SiteList.xml" 2>nul
+echo     OK - Cache cleared
+echo.
+
+echo [3] Verifying site-list.xml...
+if exist "C:\IE_Mode\site-list.xml" (
+    echo     OK - site-list.xml found
+    echo.
+    echo --- URLs in site-list.xml ---
+    findstr /i "url=" "C:\IE_Mode\site-list.xml"
+    echo --- End ---
+) else (
+    echo     ERROR - site-list.xml not found!
+    echo.
+    pause
+    exit /b
+)
+echo.
+
+echo [4] Reopening Microsoft Edge...
+start msedge.exe
+echo     OK - Edge opened
+echo.
+
+echo ============================================
+echo      REFRESH COMPLETE!
+echo ============================================
+echo.
+echo Close and reopen any Edge tabs to see
+echo IE Mode take effect
+echo.
+pause
+'@
+
+try {
+    $batContent | Out-File -FilePath "C:\IE_Mode\auto-refresh.bat" -Encoding ASCII -Force
+    Write-Host "  PASS - auto-refresh.bat created" -ForegroundColor Green
+} catch {
+    Write-Host "  FAIL - $($_.Exception.Message)" -ForegroundColor Red
+    $errors++
+}
+Write-Host ""
+
+# ======================================================
+#  STEP 4.2: CLEAR CACHE & AUTO-REFRESH
+# ======================================================
+Write-Host "[STEP 4.2] Auto-Refresh Edge cache..." -ForegroundColor Yellow
+Get-Process -Name "msedge" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
 $cachePaths = @(
     "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\EnterpriseSiteList.xml",
     "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\SiteList.xml"
@@ -130,7 +207,7 @@ $cachePaths = @(
 foreach ($p in $cachePaths) {
     if (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue }
 }
-Write-Host "  PASS - Cache cleared" -ForegroundColor Green
+Write-Host "  PASS - Cache cleared and refreshed" -ForegroundColor Green
 Write-Host ""
 
 # ======================================================
@@ -231,4 +308,16 @@ Write-Host "  1. Edit: C:\IE_Mode\site-list.xml" -ForegroundColor Yellow
 Write-Host "  2. Add URL and save (shared file = all users get it)" -ForegroundColor Yellow
 Write-Host "  3. Each user: Close and reopen Edge" -ForegroundColor Yellow
 Write-Host ""
+
+# ======================================================
+#  CLEANUP: Delete setup-ie-mode.ps1
+# ======================================================
+Write-Host "Cleaning up..." -ForegroundColor Yellow
+Start-Sleep -Seconds 2
+if (Test-Path "C:\IE_Mode\setup-ie-mode.ps1") {
+    Remove-Item "C:\IE_Mode\setup-ie-mode.ps1" -Force -ErrorAction SilentlyContinue
+    Write-Host "  Deleted: setup-ie-mode.ps1" -ForegroundColor Green
+}
+Write-Host ""
+
 pause
