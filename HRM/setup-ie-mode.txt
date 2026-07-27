@@ -128,20 +128,22 @@ $batContent = @'
 @echo off
 chcp 65001 >nul 2>&1
 color 0A
+
+REM ======================================================
+REM  FORCE RUN AS ADMIN
+REM ======================================================
+>nul 2>&1 "%SYSTEMROOT%\system32\cacls.exe" "%SYSTEMROOT%\system32\config\system"
+if %errorlevel% neq 0 (
+    echo Requesting admin privilege...
+    powershell -command "Start-Process '%~f0' -Verb runAs"
+    exit /b
+)
+
 echo.
 echo ============================================
 echo   IE MODE - AUTO REFRESH
 echo ============================================
 echo.
-
-REM Check Admin
->nul 2>&1 "%SYSTEMROOT%\system32\cacls.exe" "%SYSTEMROOT%\system32\config\system"
-if %errorlevel% neq 0 (
-    echo ERROR: Please run as Administrator
-    echo.
-    pause
-    exit /b
-)
 
 echo [1] Closing Microsoft Edge...
 taskkill /IM msedge.exe /F 2>nul
