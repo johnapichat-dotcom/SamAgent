@@ -125,97 +125,214 @@ if ($Silent) {
 }
 
 # ==========================================
-# C2 COMMAND PROCESSOR (function ใช้ร่วมกัน)
+# C2 HELPER: Update Status ใน sam_c2_commands
 # ==========================================
-function Invoke-C2Command {
-    param([string]$RowId, [string]$RemoteCmd, [string]$SafeSerial)
-
-    $Commands = $RemoteCmd -split "&&"
-    foreach ($Cmd in $Commands) {
-        $C = $Cmd.Trim()
-        switch -Regex ($C) {
-            "^SHUTDOWN$"    { Start-Process "shutdown.exe" -ArgumentList "/s /t 60 /c `"SAM Remote Command`"" -WindowStyle Hidden }
-            "^RESTART$"     { Start-Process "shutdown.exe" -ArgumentList "/r /t 60 /c `"SAM Remote Command`"" -WindowStyle Hidden }
-            "^CLEAR_TEMP$"  { Remove-Item "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue }
-            "^FORCE_SYNC$"  { Remove-Item $StateFile -Force -ErrorAction SilentlyContinue; Write-SAMLog "[C2] State cleared → FullSync next cycle" }
-            "^RUN_TASK:(.+)$" {
-                $Parts    = $Matches[1].Trim() -split '\|'
-                $TaskFile = $Parts[0].Trim()
-                $TaskArgs = if ($Parts.Count -gt 1) { ($Parts[1..($Parts.Count-1)] | ForEach-Object { "`"$_`"" }) -join " " } else { "" }
-                $TaskUrl  = "$TaskBaseUrl$TaskFile"
-                $TmpPath  = "$env:TEMP\$TaskFile"
-                try {
-                    Invoke-WebRequest -Uri $TaskUrl -OutFile $TmpPath -UseBasicParsing -ErrorAction Stop
-                    $PSA = "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& { try { & '$TmpPath' $TaskArgs } finally { Start-Sleep 2; Remove-Item '$TmpPath' -Force -ErrorAction SilentlyContinue } }`""
-                    Start-Process powershell.exe -ArgumentList $PSA -WindowStyle Hidden
-                    Write-SAMLog "[C2] Task dispatched: $TaskFile"
-                } catch { Write-SAMLog "[C2] Task failed: $TaskFile — $($_.Exception.Message)" -Level "WARN" }
-            }
-            Default { Write-SAMLog "[C2] Unknown command: $C" -Level "WARN" }
-        }
+function Update-C2Status {
+    param(
+        [string]$CommandId,
+        [string]$Status,
+        [string]$ResultMessage = ""
+    )
+    $body = @{ status = $Status }
+    switch ($Status) {
+        "acknowledged" { $body.acknowledged_at = (Get-Date).ToUniversalTime().ToString("o") }
+        "done"         { $body.executed_at     = (Get-Date).ToUniversalTime().ToString("o") }
+        "failed"       { $body.executed_at     = (Get-Date).ToUniversalTime().ToString("o") }
     }
+    if ($ResultMessage) { $body.result_message = $ResultMessage }
 
-    # Acknowledge → DONE
     try {
-        $PatchUrl  = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices?id=eq.$RowId"
-        $PatchBody = @{ RemoteCommand = "DONE" } | ConvertTo-Json -Compress
-        $PatchHdr  = @{ "apikey"=$SupabaseKey; "Authorization"="Bearer $SupabaseKey"; "Content-Type"="application/json"; "User-Agent"="SAM-Agent/v$SAM_VERSION" }
-        Invoke-RestMethod -Uri $PatchUrl -Method Patch -Headers $PatchHdr -Body $PatchBody -TimeoutSec 10 | Out-Null
-        Write-SAMLog "[C2] Acknowledged (DONE): $RowId"
-    } catch { Write-SAMLog "[C2] Ack failed: $($_.Exception.Message)" -Level "WARN" }
+        $hdr = @{
+            "apikey"        = $SupabaseKey
+            "Authorization" = "Bearer $SupabaseKey"
+            "Content-Type"  = "application/json"
+            "Prefer"        = "return=minimal"
+        }
+        Invoke-RestMethod `
+            -Uri     "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_c2_commands?id=eq.$CommandId" `
+            -Method  Patch `
+            -Headers $hdr `
+            -Body    ($body | ConvertTo-Json -Compress) `
+            -TimeoutSec 10 | Out-Null
+    } catch {
+        Write-SAMLog "[C2] Status update failed [$CommandId]: $($_.Exception.Message)" -Level "WARN"
+    }
 }
 
 # ==========================================
-# C2-ONLY MODE: ดึง RemoteCommand เท่านั้น (เบา ทุก 20 นาที)
+# C2 COMMAND PROCESSOR (จาก sam_c2_commands)
+# ==========================================
+function Invoke-C2Command {
+    param([PSCustomObject]$Cmd)
+
+    $id      = $Cmd.id
+    $command = $Cmd.command
+    $task    = $Cmd.task_filename
+    $params  = if ($Cmd.task_parameters) {
+                   try { $Cmd.task_parameters | ConvertFrom-Json } catch { $null }
+               } else { $null }
+
+    Write-SAMLog "[C2] Execute: [$command] id=$id"
+    Update-C2Status -CommandId $id -Status "acknowledged"
+    Update-C2Status -CommandId $id -Status "running"
+
+    $result  = "OK"
+    $success = $true
+
+    try {
+        switch ($command) {
+
+            "CLEAR_TEMP" {
+                $paths = @($env:TEMP, "C:\Windows\Temp")
+                foreach ($p in $paths) {
+                    if (Test-Path $p) {
+                        Get-ChildItem $p -Recurse -Force -ErrorAction SilentlyContinue |
+                            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                $result = "CLEAR_TEMP completed"
+            }
+
+            "FORCE_SYNC" {
+                Remove-Item $StateFile -Force -ErrorAction SilentlyContinue
+                $result = "State cleared — FullSync next cycle"
+            }
+
+            "RESTART" {
+                $result = "RESTART initiated"
+                Update-C2Status -CommandId $id -Status "done" -ResultMessage $result
+                Start-Sleep -Seconds 5
+                Start-Process "shutdown.exe" -ArgumentList "/r /t 30 /c `"SAM Remote Restart`"" -WindowStyle Hidden
+                return
+            }
+
+            "SHUTDOWN" {
+                $result = "SHUTDOWN initiated"
+                Update-C2Status -CommandId $id -Status "done" -ResultMessage $result
+                Start-Sleep -Seconds 5
+                Start-Process "shutdown.exe" -ArgumentList "/s /t 30 /c `"SAM Remote Shutdown`"" -WindowStyle Hidden
+                return
+            }
+
+            "RUN_TASK" {
+                if (-not $task) { throw "task_filename is empty" }
+
+                # ป้องกัน path traversal
+                if ($task -notmatch '^[\w\-]+\.ps1$') { throw "Invalid task_filename: $task" }
+
+                $taskUrl  = "$TaskBaseUrl$task"
+                $taskPath = "$env:TEMP\$task"
+
+                Invoke-WebRequest -Uri $taskUrl -OutFile $taskPath -UseBasicParsing -ErrorAction Stop
+                if (-not (Test-Path $taskPath)) { throw "Download failed: $task" }
+
+                # สร้าง argument string จาก task_parameters (ถ้ามี)
+                $argStr = ""
+                if ($params) {
+                    $params.PSObject.Properties | ForEach-Object {
+                        $argStr += " -$($_.Name) `"$($_.Value)`""
+                    }
+                }
+
+                $PSA = "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& { " +
+                       "try { & '$taskPath'$argStr } " +
+                       "finally { Start-Sleep 2; Remove-Item '$taskPath' -Force -ErrorAction SilentlyContinue } }`""
+                Start-Process powershell.exe -ArgumentList $PSA -WindowStyle Hidden
+                $result = "Task dispatched: $task$argStr"
+            }
+
+            default { throw "Unknown command: $command" }
+        }
+    } catch {
+        $success = $false
+        $result  = "ERROR: $($_.Exception.Message)"
+        Write-SAMLog "[C2] Failed [$command]: $($_.Exception.Message)" -Level "WARN"
+    }
+
+    $finalStatus = if ($success) { "done" } else { "failed" }
+    Update-C2Status -CommandId $id -Status $finalStatus -ResultMessage $result
+    Write-SAMLog "[C2] Result [$command]: $result"
+}
+
+# ==========================================
+# C2-ONLY MODE: poll จาก sam_c2_commands
 # ==========================================
 if ($C2Only) {
     Write-SAMLog "=== C2 Poll Mode ==="
-    if (-not (Test-Path $ConfigFile)) { Write-SAMLog "No config, skip C2." -Level "WARN"; exit 0 }
-    $Config = Get-Content $ConfigFile -Raw | ConvertFrom-Json
+    if (-not (Test-Path $ConfigFile)) {
+        Write-SAMLog "No config, skip C2." -Level "WARN"; exit 0
+    }
 
-    # ดึง row ของเครื่องนี้จาก Supabase
+    # ดึง SerialNumber ของเครื่องนี้
+    $BIOS = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+    $RawSN = if ($BIOS.SerialNumber) { $BIOS.SerialNumber.Trim() } else { "" }
+    if ([string]::IsNullOrWhiteSpace($RawSN) -or $RawSN -match "(?i)To be filled|O\.E\.M\.|Default|None") {
+        $UUID = (Get-CimInstance Win32_ComputerSystemProduct).UUID
+        $SafeSerial = "HWID-" + ($UUID.Substring(0, 18))
+    } else { $SafeSerial = $RawSN }
+
+    # Poll pending commands
     try {
-        $SafeSerial = ""
-        $BIOS = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
-        $RawSerial = if ($BIOS.SerialNumber) { $BIOS.SerialNumber.Trim() } else { "" }
-        if ([string]::IsNullOrWhiteSpace($RawSerial) -or $RawSerial -match "(?i)To be filled|O\.E\.M\.|Default|None") {
-            $UUID = (Get-CimInstance Win32_ComputerSystemProduct).UUID
-            $SafeSerial = "HWID-" + ($UUID.Substring(0,18))
-        } else { $SafeSerial = $RawSerial }
+        $filter = "serial_number=eq.$([uri]::EscapeDataString($SafeSerial))" +
+                  "&computer_name=eq.$([uri]::EscapeDataString($env:COMPUTERNAME))" +
+                  "&status=eq.pending" +
+                  "&order=batch_id.asc,seq.asc"
 
-        $PollUrl = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices?SerialNumber=eq.$([uri]::EscapeDataString($SafeSerial))&select=id,RemoteCommand"
-        $PollHeaders = @{
+        $hdr = @{
             "apikey"        = $SupabaseKey
             "Authorization" = "Bearer $SupabaseKey"
             "User-Agent"    = "SAM-Agent/v$SAM_VERSION"
         }
-        $PollResponse = Invoke-RestMethod -Uri $PollUrl -Method Get -Headers $PollHeaders -TimeoutSec 15 -ErrorAction Stop
 
-        if ($PollResponse -and $PollResponse.Count -gt 0) {
-            $Row = $PollResponse[0]
-            if ($Row.RemoteCommand -and $Row.RemoteCommand -notin @("","NONE","DONE")) {
-                Write-SAMLog "C2 Command received: $($Row.RemoteCommand)"
-                Invoke-C2Command -RowId $Row.id -RemoteCmd $Row.RemoteCommand -SafeSerial $SafeSerial
-            } else {
-                Write-SAMLog "C2 Poll: No pending command."
-            }
+        $commands = Invoke-RestMethod `
+            -Uri     "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_c2_commands?$filter" `
+            -Method  Get `
+            -Headers $hdr `
+            -TimeoutSec 15 `
+            -ErrorAction Stop
 
-            # อัปเดต last seen ทุกครั้งที่ poll สำเร็จ (บอกว่าเครื่องยัง online)
-            try {
-                $NowUTC   = (Get-Date).ToUniversalTime()
-                $NowTH    = $NowUTC.AddHours(7).ToString("yyyy-MM-dd HH:mm:ss")
-                $PingUrl  = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices?SerialNumber=eq.$([uri]::EscapeDataString($SafeSerial))"
-                $PingBody = @{ updated_at = $NowUTC.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"); LastSyncTH = $NowTH } | ConvertTo-Json -Compress
-                $PingHdr  = @{ "apikey"=$SupabaseKey; "Authorization"="Bearer $SupabaseKey"; "Content-Type"="application/json"; "Prefer"="return=minimal" }
-                Invoke-RestMethod -Uri $PingUrl -Method Patch -Headers $PingHdr -Body $PingBody -TimeoutSec 10 | Out-Null
-                Write-SAMLog "C2 Poll heartbeat updated: $NowTH"
-            } catch {
-                Write-SAMLog "C2 heartbeat update failed: $($_.Exception.Message)" -Level "WARN"
+        if ($commands -and $commands.Count -gt 0) {
+            Write-SAMLog "[C2] Found $($commands.Count) pending command(s)"
+
+            # Group by batch_id → execute ตาม seq
+            $batches = $commands | Group-Object -Property batch_id
+            foreach ($batch in $batches) {
+                Write-SAMLog "[C2] Batch: $($batch.Name) ($($batch.Count) cmd)"
+                $batch.Group | Sort-Object seq | ForEach-Object {
+                    Invoke-C2Command -Cmd $_
+                    Start-Sleep -Seconds 2
+                }
             }
+        } else {
+            Write-SAMLog "[C2] No pending commands"
         }
     } catch {
-        Write-SAMLog "C2 Poll failed: $($_.Exception.Message)" -Level "WARN"
+        Write-SAMLog "[C2] Poll failed: $($_.Exception.Message)" -Level "WARN"
     }
+
+    # Heartbeat (เหมือนเดิม)
+    try {
+        $NowUTC = (Get-Date).ToUniversalTime()
+        $NowTH  = $NowUTC.AddHours(7).ToString("yyyy-MM-dd HH:mm:ss")
+        $pingUrl  = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices" +
+                    "?SerialNumber=eq.$([uri]::EscapeDataString($SafeSerial))"
+        $pingBody = @{
+            updated_at = $NowUTC.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+            LastSyncTH = $NowTH
+        } | ConvertTo-Json -Compress
+        $pingHdr = @{
+            "apikey"        = $SupabaseKey
+            "Authorization" = "Bearer $SupabaseKey"
+            "Content-Type"  = "application/json"
+            "Prefer"        = "return=minimal"
+        }
+        Invoke-RestMethod -Uri $pingUrl -Method Patch -Headers $pingHdr `
+                          -Body $pingBody -TimeoutSec 10 | Out-Null
+        Write-SAMLog "[C2] Heartbeat updated: $NowTH"
+    } catch {
+        Write-SAMLog "[C2] Heartbeat failed: $($_.Exception.Message)" -Level "WARN"
+    }
+
     exit 0
 }
 
@@ -827,9 +944,23 @@ foreach ($k in $PayloadData.Keys) {
     if ($SupabaseFields -contains $k) { $FilteredPayload[$k] = $PayloadData[$k] }
     else { Write-SAMLog "Skipped field not in schema: $k" -Level "WARN" }
 }
-$JsonPayload = ($FilteredPayload | ConvertTo-Json -Depth 5 -Compress) -replace '\\u0000', ''
-$Utf8Bytes   = [System.Text.Encoding]::UTF8.GetBytes($JsonPayload)
-$MaxRetries  = 6; $Attempt = 0; $IsSuccess = $false
+
+# Clean null bytes from all string values before serialize
+function Remove-NullBytes {
+    param([object]$Obj)
+    if ($Obj -is [System.Collections.IDictionary]) {
+        $clean = [ordered]@{}
+        foreach ($k in $Obj.Keys) { $clean[$k] = Remove-NullBytes $Obj[$k] }
+        return $clean
+    } elseif ($Obj -is [string]) {
+        return $Obj -replace '\u0000','' -replace [char]0,''
+    } else { return $Obj }
+}
+
+$CleanPayload = Remove-NullBytes $FilteredPayload
+$JsonPayload  = ($CleanPayload | ConvertTo-Json -Depth 5 -Compress) -replace '\\u0000','' -replace '\x00',''
+$Utf8Bytes    = [System.Text.Encoding]::UTF8.GetBytes($JsonPayload)
+$MaxRetries   = 6; $Attempt = 0; $IsSuccess = $false
 
 while ($Attempt -lt $MaxRetries -and -not $IsSuccess) {
     $Attempt++
@@ -858,14 +989,6 @@ while ($Attempt -lt $MaxRetries -and -not $IsSuccess) {
             }
         }
         try { $NewState | ConvertTo-Json -Depth 5 | Out-File $StateFile -Encoding UTF8 } catch {}
-
-        # C2 Command Processing
-        $RemoteCmd = if ($Response -is [array]) { $Response[0].RemoteCommand } else { $Response.RemoteCommand }
-        $RowId     = if ($Response -is [array]) { $Response[0].id } else { $Response.id }
-        if ($RemoteCmd -and $RemoteCmd -notin @("","NONE","DONE")) {
-            Write-SAMLog "C2 Command: $RemoteCmd"
-            Invoke-C2Command -RowId $RowId -RemoteCmd $RemoteCmd -SafeSerial $SafeSerial
-        }
 
     } catch {
         if ($null -ne $Timer) { $Timer.Stop() }
