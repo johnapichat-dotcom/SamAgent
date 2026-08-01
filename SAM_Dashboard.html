@@ -2018,12 +2018,663 @@ function timeSince(s) {
   } catch(e){ return '—'; }
 }
 
-// placeholders Part 3
-function openUserMgmt()     {}
-function openWhitelistMgmt(){}
-function openAddUser()      {}
-function openAddWhitelist() {}
-async function saveUser()   {}
+// ============================================================
+// PART 3 — C2 + WHITELIST MANAGER + USER MANAGEMENT
+// ============================================================
+
+// ── C2 COMMAND DEFINITIONS ──────────────────────────────────
+const C2_COMMANDS = [
+  { cmd:'CLEAR_TEMP',  label:'🧹 Clear Temp',  minRole:'branch_it',   desc:'ลบไฟล์ชั่วคราว' },
+  { cmd:'FORCE_SYNC',  label:'🔄 Force Sync',  minRole:'branch_it',   desc:'บังคับ sync ข้อมูล' },
+  { cmd:'RESTART',     label:'🔁 Restart',     minRole:'it_manager',  desc:'รีสตาร์ทเครื่อง (30วิ)' },
+  { cmd:'SHUTDOWN',    label:'⏻ Shutdown',     minRole:'it_manager',  desc:'ปิดเครื่อง (30วิ)' },
+  { cmd:'RUN_TASK',    label:'📜 Run Task',     minRole:'regional_it', desc:'รันสคริปต์จาก /Task/' },
+];
+
+const TASK_FILES = [
+  'Task_AppInstall.ps1',
+  'Task_AppUninstall.ps1',
+  'Task_LogCollector.ps1',
+  'Task_NetPwrConfig.ps1',
+  'Task_PrtRemove.ps1',
+  'Task_RunCmd.ps1',
+  'Task_SysRename.ps1',
+  'Task_UsrManage.ps1',
+  'Task_WinRepair.ps1',
+];
+
+// Task parameter fields
+const TASK_PARAMS = {
+  'Task_SysRename.ps1':    [{ key:'NewName',  label:'ชื่อใหม่',        placeholder:'BKK-STN-001' }],
+  'Task_AppInstall.ps1':   [{ key:'AppName',  label:'ชื่อโปรแกรม',     placeholder:'Chrome' }, { key:'Silent', label:'Silent Install', placeholder:'true' }],
+  'Task_AppUninstall.ps1': [{ key:'AppName',  label:'ชื่อโปรแกรม',     placeholder:'Chrome' }],
+  'Task_UsrManage.ps1':    [{ key:'Username', label:'Username',        placeholder:'john' }, { key:'Action', label:'Action', placeholder:'disable' }],
+  'Task_RunCmd.ps1':       [{ key:'Command',  label:'คำสั่ง',          placeholder:'ipconfig /flushdns' }],
+  'Task_PrtRemove.ps1':    [{ key:'PrinterName', label:'ชื่อ Printer', placeholder:'HP LaserJet' }],
+  'Task_NetPwrConfig.ps1': [{ key:'Profile',  label:'Power Profile',   placeholder:'Balanced' }],
+};
+
+// ── RENDER C2 SECTION IN MODAL ──────────────────────────────
+function renderC2Section(r) {
+  const el = document.getElementById('c2Section');
+  if (!el) return;
+
+  if (!hasRole('branch_it')) {
+    el.innerHTML = '<div class="no-access">🔒 ไม่มีสิทธิ์ส่งคำสั่ง C2 กรุณาติดต่อ IT Admin</div>';
+    return;
+  }
+
+  // กรอง command ตาม role
+  const allowedCmds = C2_COMMANDS.filter(c => hasRole(c.minRole));
+
+  const presetBtns = allowedCmds
+    .filter(c => c.cmd !== 'RUN_TASK')
+    .map(c => `<button class="btn btn-sm" title="${c.desc}"
+        onclick="selectC2Cmd('${c.cmd}','${r.SerialNumber}','${r.ComputerName}')">
+        ${c.label}
+      </button>`).join('');
+
+  const taskSection = hasRole('regional_it') ? `
+    <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <select class="fselect" id="taskSelect" onchange="onTaskSelect()" style="flex:1;min-width:160px">
+        <option value="">— เลือก Task Script —</option>
+        ${TASK_FILES.map(f=>`<option value="${f}">${f}</option>`).join('')}
+      </select>
+    </div>
+    <div id="taskParamsBox" style="display:none;margin-top:6px;display:none"></div>
+    <div style="margin-top:6px">
+      <button class="btn btn-sm btn-purple" onclick="selectC2Cmd('RUN_TASK','${r.SerialNumber}','${r.ComputerName}')">
+        📜 ส่ง Run Task
+      </button>
+    </div>` : '';
+
+  el.innerHTML = `
+    <div class="cmd-box">
+      <div class="fc-key" style="margin-bottom:6px">
+        💻 Remote Command (C2)
+        <span style="color:var(--text3);font-weight:400;margin-left:6px">
+          ${r.ComputerName} · ${r.BU}
+        </span>
+      </div>
+
+      <div class="cmd-presets">${presetBtns}</div>
+      ${taskSection}
+
+      <div class="cmd-row" style="margin-top:10px">
+        <input class="cmd-input" id="cmdPreview" placeholder="คำสั่งที่จะส่ง..." readonly
+          style="background:var(--bg);color:var(--indigo2);font-weight:600">
+        <button class="btn btn-danger" id="btnSendC2"
+          onclick="sendC2Command('${r.SerialNumber}','${r.ComputerName}')" disabled>
+          ▶ ส่ง
+        </button>
+      </div>
+
+      <div style="font-size:9px;color:var(--text3);margin-top:5px;font-family:'JetBrains Mono',monospace">
+        คำสั่งจะถูกเก็บใน sam_c2_commands · Agent รับคำสั่งภายใน 40 นาที
+      </div>
+
+      <!-- C2 History -->
+      <div class="c2-history" id="c2HistoryBox">
+        <div class="c2-history-title">ประวัติล่าสุด (5 รายการ)</div>
+        <div style="color:var(--text3);font-size:10px;padding:4px 0">
+          <div class="spinner spinner-sm" style="display:inline-block;vertical-align:middle;margin-right:6px"></div>
+          กำลังโหลด...
+        </div>
+      </div>
+    </div>`;
+
+  // โหลด C2 history
+  refreshC2History(r.ComputerName, r.SerialNumber);
+}
+
+// ── C2 COMMAND SELECTION ────────────────────────────────────
+let _c2CurrentCmd = '', _c2CurrentSerial = '', _c2CurrentPC = '';
+
+function selectC2Cmd(cmd, serial, pc) {
+  _c2CurrentCmd    = cmd;
+  _c2CurrentSerial = serial;
+  _c2CurrentPC     = pc;
+
+  const preview = document.getElementById('cmdPreview');
+  const sendBtn = document.getElementById('btnSendC2');
+  if (!preview || !sendBtn) return;
+
+  if (cmd === 'RUN_TASK') {
+    const taskSel = document.getElementById('taskSelect');
+    const task    = taskSel?.value;
+    if (!task) { showToast('กรุณาเลือก Task Script ก่อน','warn'); return; }
+
+    // รวม parameters
+    const params    = collectTaskParams(task);
+    const paramStr  = params ? ' | ' + Object.entries(params).map(([k,v])=>`${k}=${v}`).join(' ') : '';
+    preview.value   = `RUN_TASK:${task}${paramStr}`;
+  } else {
+    preview.value = cmd;
+  }
+
+  sendBtn.disabled = false;
+  sendBtn.style.opacity = '1';
+}
+
+function onTaskSelect() {
+  const task = document.getElementById('taskSelect')?.value;
+  const box  = document.getElementById('taskParamsBox');
+  if (!box) return;
+
+  const fields = TASK_PARAMS[task];
+  if (!fields || !fields.length) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+
+  box.style.display = 'block';
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:4px">
+      ${fields.map(f=>`
+        <div>
+          <div class="form-label" style="margin-bottom:3px">${f.label}</div>
+          <input class="form-input" id="tp_${f.key}"
+            placeholder="${f.placeholder}" style="font-size:11px;padding:5px 8px">
+        </div>`).join('')}
+    </div>`;
+
+  // อัปเดต preview เมื่อพิมพ์
+  fields.forEach(f => {
+    document.getElementById('tp_'+f.key)?.addEventListener('input', () => {
+      if (_c2CurrentCmd === 'RUN_TASK') selectC2Cmd('RUN_TASK', _c2CurrentSerial, _c2CurrentPC);
+    });
+  });
+}
+
+function collectTaskParams(task) {
+  const fields = TASK_PARAMS[task];
+  if (!fields) return null;
+  const params = {};
+  fields.forEach(f => {
+    const v = document.getElementById('tp_'+f.key)?.value?.trim();
+    if (v) params[f.key] = v;
+  });
+  return Object.keys(params).length ? params : null;
+}
+
+// ── SEND C2 COMMAND ─────────────────────────────────────────
+async function sendC2Command(serial, pc) {
+  const preview = document.getElementById('cmdPreview');
+  const raw     = (preview?.value || '').trim();
+  if (!raw) { showToast('กรุณาเลือกคำสั่งก่อน', 'err'); return; }
+
+  // Parse command + task_filename + task_parameters
+  let command       = raw;
+  let task_filename = null;
+  let task_parameters = null;
+
+  if (raw.startsWith('RUN_TASK:')) {
+    command = 'RUN_TASK';
+    const rest   = raw.replace('RUN_TASK:', '');
+    const parts  = rest.split(' | ');
+    task_filename = parts[0].trim();
+    if (parts[1]) {
+      task_parameters = {};
+      parts[1].split(' ').forEach(kv => {
+        const [k,v] = kv.split('=');
+        if (k && v) task_parameters[k] = v;
+      });
+    }
+  }
+
+  // ตรวจสิทธิ์อีกรอบ
+  if (!canSendC2(command)) {
+    showToast('⛔ ไม่มีสิทธิ์ส่งคำสั่งนี้', 'err');
+    return;
+  }
+
+  // Confirm คำสั่งอันตราย
+  if (['SHUTDOWN','RESTART'].includes(command)) {
+    showConfirm(
+      `⚠ ยืนยันคำสั่ง ${command}`,
+      `กำลังจะส่ง "${command}" ไปยัง ${pc} ใช่หรือไม่?`,
+      () => doSendC2(serial, pc, command, task_filename, task_parameters)
+    );
+    return;
+  }
+
+  await doSendC2(serial, pc, command, task_filename, task_parameters);
+}
+
+async function doSendC2(serial, pc, command, task_filename, task_parameters) {
+  const sendBtn = document.getElementById('btnSendC2');
+  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '⏳ กำลังส่ง...'; }
+
+  try {
+    const batch_id = crypto.randomUUID();
+    const payload  = {
+      batch_id,
+      seq:            1,
+      serial_number:  serial,
+      computer_name:  pc,
+      command,
+      task_filename:  task_filename  || null,
+      task_parameters: task_parameters || null,
+      issued_by:      CURRENT_USER.email,
+      status:         'pending',
+    };
+
+    const { error } = await sb.from('sam_c2_commands').insert(payload);
+    if (error) throw error;
+
+    showToast(`✅ ส่ง [${command}] → ${pc} สำเร็จ`, 'ok');
+
+    // reset UI
+    const preview = document.getElementById('cmdPreview');
+    if (preview) { preview.value = ''; }
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '▶ ส่ง'; }
+    _c2CurrentCmd = '';
+
+    // refresh history
+    await refreshC2History(pc, serial);
+
+  } catch(e) {
+    showToast('❌ ส่งคำสั่งไม่สำเร็จ: ' + e.message, 'err');
+    if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '▶ ส่ง'; }
+  }
+}
+
+// ── C2 HISTORY ──────────────────────────────────────────────
+async function refreshC2History(pc, serial) {
+  const box = document.getElementById('c2HistoryBox');
+  if (!box) return;
+
+  try {
+    const { data, error } = await sb
+      .from('sam_c2_commands')
+      .select('id,command,task_filename,status,issued_by,issued_at,executed_at,result_message')
+      .eq('computer_name', pc)
+      .order('issued_at', { ascending: false })
+      .limit(5);
+
+    if (error) throw error;
+
+    if (!data || !data.length) {
+      box.innerHTML = `<div class="c2-history-title">ประวัติล่าสุด</div>
+        <div style="color:var(--text3);font-size:10px;padding:4px 0">ยังไม่มีประวัติ</div>`;
+      return;
+    }
+
+    const statusChip = s => {
+      const map = { pending:'chip-pending ⏳', acknowledged:'chip-running 📡',
+                    running:'chip-running ⚙', done:'chip-done ✅', failed:'chip-failed ❌', cancelled:'chip-warn ⊘' };
+      const [cls,ico] = (map[s]||'chip-warn ?').split(' ');
+      return `<span class="chip ${cls}" style="font-size:8px">${ico} ${s}</span>`;
+    };
+
+    box.innerHTML = `
+      <div class="c2-history-title">ประวัติล่าสุด (${data.length} รายการ)</div>
+      ${data.map(h => `
+        <div class="c2-hist-item" title="${h.result_message||''}">
+          <span class="c2-hist-cmd">${h.command}${h.task_filename?':'+h.task_filename.replace('Task_','').replace('.ps1',''):''}</span>
+          ${statusChip(h.status)}
+          <span class="c2-hist-time">${timeSince(h.issued_at)}</span>
+          <span class="c2-hist-by">${(h.issued_by||'').split('@')[0]}</span>
+        </div>`).join('')}`;
+  } catch(e) {
+    box.innerHTML = `<div class="c2-history-title">ประวัติล่าสุด</div>
+      <div style="color:var(--err2);font-size:10px">โหลดไม่สำเร็จ: ${e.message}</div>`;
+  }
+}
+
+// ============================================================
+// WHITELIST MANAGER
+// ============================================================
+async function openWhitelistMgmt() {
+  openOverlay('whitelistOverlay');
+  await renderWhitelistBody();
+}
+
+async function renderWhitelistBody() {
+  const body = document.getElementById('whitelistBody');
+  body.innerHTML = '<div class="loading"><div class="spinner"></div>กำลังโหลด...</div>';
+
+  const { data, error } = await sb
+    .from('sam_whitelist')
+    .select('*')
+    .order('category')
+    .order('name');
+
+  if (error) {
+    body.innerHTML = `<div style="color:var(--err2);padding:16px">⚠ ${error.message}</div>`;
+    return;
+  }
+
+  WHITELIST = data || [];
+
+  // group by category
+  const groups = {};
+  WHITELIST.forEach(w => {
+    const cat = w.category || 'อื่นๆ';
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(w);
+  });
+
+  const canEdit = hasRole('it_manager');
+
+  body.innerHTML = `
+    <div style="margin-bottom:10px">
+      <input class="finput" id="wlSearch" placeholder="🔍 ค้นหา..."
+        oninput="filterWhitelist()" style="width:100%">
+    </div>
+    <div id="wlList">
+      ${Object.entries(groups).map(([cat, items]) => `
+        <div style="margin-bottom:14px">
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;
+            letter-spacing:.6px;padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:6px">
+            ${cat} <span style="color:var(--indigo2)">(${items.length})</span>
+          </div>
+          ${items.map(w => `
+            <div class="wl-item" data-id="${w.id}" data-name="${w.name.toLowerCase()}"
+              style="display:flex;align-items:center;gap:8px;padding:6px 8px;
+                border-radius:7px;transition:background .1s;margin-bottom:3px">
+              <span style="flex:1;font-size:11px;color:var(--text)">${w.name}</span>
+              <span style="font-size:9px;color:var(--text3);font-family:'JetBrains Mono',monospace">
+                ${w.added_by||'—'}
+              </span>
+              ${canEdit ? `
+                <button class="btn btn-sm btn-danger"
+                  onclick="deleteWhitelist('${w.id}','${w.name.replace(/'/g,"\\'")}')">🗑</button>
+              ` : ''}
+            </div>`).join('')}
+        </div>`).join('')}
+    </div>
+    <div style="padding-top:10px;border-top:1px solid var(--border);color:var(--text3);font-size:10px">
+      รวม ${WHITELIST.length} รายการ
+    </div>`;
+}
+
+function filterWhitelist() {
+  const q = (document.getElementById('wlSearch')?.value || '').toLowerCase();
+  document.querySelectorAll('.wl-item').forEach(el => {
+    el.style.display = el.dataset.name.includes(q) ? '' : 'none';
+  });
+}
+
+async function openAddWhitelist() {
+  if (!hasRole('it_manager')) { showToast('⛔ ไม่มีสิทธิ์','err'); return; }
+
+  const name = prompt('ชื่อโปรแกรม (ตรงกับที่แสดงใน AllSoftware):');
+  if (!name?.trim()) return;
+
+  const category = prompt('Category (Office/Security/Remote/System/Browser/Utility):') || 'Other';
+
+  const { error } = await sb.from('sam_whitelist').insert({
+    name:       name.trim(),
+    category:   category.trim(),
+    added_by:   CURRENT_USER.email,
+  });
+
+  if (error) { showToast('❌ เพิ่มไม่สำเร็จ: ' + error.message, 'err'); return; }
+
+  showToast('✅ เพิ่ม "' + name + '" สำเร็จ', 'ok');
+  WHITELIST = (await sb.from('sam_whitelist').select('*').order('name')).data || [];
+  await renderWhitelistBody();
+}
+
+async function deleteWhitelist(id, name) {
+  showConfirm(
+    '🗑 ลบออกจาก Whitelist',
+    `ต้องการลบ "${name}" ออกจาก Whitelist ใช่หรือไม่?`,
+    async () => {
+      const { error } = await sb.from('sam_whitelist').delete().eq('id', id);
+      if (error) { showToast('❌ ลบไม่สำเร็จ: ' + error.message, 'err'); return; }
+      showToast('✅ ลบ "' + name + '" แล้ว', 'ok');
+      WHITELIST = WHITELIST.filter(w => w.id !== id);
+      await renderWhitelistBody();
+    }
+  );
+}
+
+// ============================================================
+// USER MANAGEMENT
+// ============================================================
+async function openUserMgmt() {
+  if (!hasRole('super_admin')) { showToast('⛔ เฉพาะ Super Admin เท่านั้น','err'); return; }
+  openOverlay('userMgmtOverlay');
+  await renderUserMgmtBody();
+}
+
+async function renderUserMgmtBody() {
+  const body = document.getElementById('userMgmtBody');
+  body.innerHTML = '<div class="loading"><div class="spinner"></div>กำลังโหลด...</div>';
+
+  const { data: users, error } = await sb
+    .from('sam_users')
+    .select('*')
+    .order('role')
+    .order('email');
+
+  if (error) {
+    body.innerHTML = `<div style="color:var(--err2);padding:16px">⚠ ${error.message}</div>`;
+    return;
+  }
+
+  const roleColor = { super_admin:'var(--err2)', it_manager:'var(--orange)', regional_it:'var(--warn2)', branch_it:'var(--indigo2)', viewer:'var(--text3)' };
+
+  body.innerHTML = `
+    <div style="margin-bottom:10px">
+      <input class="finput" id="userSearch" placeholder="🔍 ค้นหา email..."
+        oninput="filterUserList()" style="width:100%">
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead>
+        <tr style="background:var(--bg3);border-bottom:1px solid var(--border2)">
+          <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">Email</th>
+          <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">Role</th>
+          <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">BU Scope</th>
+          <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">Branch Scope</th>
+          <th style="padding:8px 10px;text-align:center;color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">Action</th>
+        </tr>
+      </thead>
+      <tbody id="userTBody">
+        ${users.map(u => `
+          <tr class="user-row" data-email="${u.email.toLowerCase()}"
+            style="border-bottom:1px solid var(--border);transition:background .1s"
+            onmouseover="this.style.background='var(--bg3)'"
+            onmouseout="this.style.background=''">
+            <td style="padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:10px">
+              ${u.email}
+              ${u.email === CURRENT_USER?.email ? '<span style="color:var(--ok2);font-size:9px;margin-left:4px">(คุณ)</span>' : ''}
+            </td>
+            <td style="padding:8px 10px">
+              <span style="color:${roleColor[u.role]||'var(--text2)'};font-weight:600;font-size:10px">
+                ${ROLE_LABEL[u.role]||u.role}
+              </span>
+            </td>
+            <td style="padding:8px 10px;font-size:10px;color:var(--text2)">
+              ${u.allowed_bu?.length ? u.allowed_bu.join(', ') : '<span style="color:var(--text3)">ทั้งหมด</span>'}
+            </td>
+            <td style="padding:8px 10px;font-size:10px;color:var(--text2)">
+              ${u.allowed_branch?.length
+                ? (u.allowed_branch.slice(0,3).join(', ') + (u.allowed_branch.length>3?' +'+(u.allowed_branch.length-3):''))
+                : '<span style="color:var(--text3)">ทั้งหมด</span>'}
+            </td>
+            <td style="padding:8px 10px;text-align:center">
+              <div style="display:flex;gap:4px;justify-content:center">
+                <button class="btn btn-sm" onclick="openEditUser('${u.email}')">✏ แก้ไข</button>
+                ${u.email !== CURRENT_USER?.email ? `
+                  <button class="btn btn-sm btn-danger"
+                    onclick="deleteUser('${u.email}')">🗑</button>
+                ` : ''}
+              </div>
+            </td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+    <div style="padding-top:10px;color:var(--text3);font-size:10px;border-top:1px solid var(--border);margin-top:8px">
+      รวม ${users.length} users
+    </div>`;
+}
+
+function filterUserList() {
+  const q = (document.getElementById('userSearch')?.value || '').toLowerCase();
+  document.querySelectorAll('.user-row').forEach(el => {
+    el.style.display = el.dataset.email.includes(q) ? '' : 'none';
+  });
+}
+
+// ── ADD USER ────────────────────────────────────────────────
+function openAddUser() {
+  EDIT_USER_ID = null;
+  document.getElementById('userFormTitle').textContent = '+ เพิ่ม User';
+  renderUserForm(null);
+  openOverlay('userFormOverlay');
+}
+
+async function openEditUser(email) {
+  EDIT_USER_ID = email;
+  document.getElementById('userFormTitle').textContent = '✏ แก้ไข User';
+
+  const { data, error } = await sb.from('sam_users').select('*').eq('email', email).single();
+  if (error) { showToast('โหลดข้อมูล user ไม่สำเร็จ','err'); return; }
+
+  renderUserForm(data);
+  openOverlay('userFormOverlay');
+}
+
+function renderUserForm(user) {
+  const isEdit = !!user;
+  const buChecked = bu => user?.allowed_bu?.includes(bu) ? 'checked' : '';
+  const branchVal = user?.allowed_branch?.join(', ') || '';
+
+  document.getElementById('userFormBody').innerHTML = `
+    <div class="form-group">
+      <label class="form-label">Email <span>*</span></label>
+      <input class="form-input" id="uf_email" type="email"
+        value="${user?.email||''}"
+        placeholder="user@company.com"
+        ${isEdit ? 'readonly style="opacity:.6;cursor:not-allowed"' : ''}>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Role <span>*</span></label>
+      <select class="form-select" id="uf_role" onchange="onRoleChange()">
+        ${Object.entries(ROLE_LABEL).map(([k,v]) =>
+          `<option value="${k}" ${user?.role===k?'selected':''}>${v}</option>`
+        ).join('')}
+      </select>
+      <div class="form-hint" id="roleHint"></div>
+    </div>
+
+    <div id="scopeSection">
+      <div class="form-group">
+        <label class="form-label">BU ที่เข้าถึงได้
+          <span style="color:var(--text3);font-weight:400"> (ไม่เลือก = ทั้งหมด)</span>
+        </label>
+        <div class="checkbox-grid">
+          ${BU_LIST.map(bu => `
+            <label class="checkbox-item ${user?.allowed_bu?.includes(bu)?'checked':''}">
+              <input type="checkbox" value="${bu}" name="uf_bu" ${buChecked(bu)}
+                onchange="this.parentElement.classList.toggle('checked',this.checked)">
+              ${bu}
+            </label>`).join('')}
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Branch ที่เข้าถึงได้
+          <span style="color:var(--text3);font-weight:400"> (ว่าง = ทั้งหมด, คั่นด้วย comma)</span>
+        </label>
+        <input class="form-input" id="uf_branch"
+          value="${branchVal}"
+          placeholder="LPG001, LPG002, LPG005">
+        <div class="form-hint">ใส่ชื่อ BranchID ตรงๆ ตามที่อยู่ในระบบ</div>
+      </div>
+    </div>`;
+
+  onRoleChange();
+}
+
+function onRoleChange() {
+  const role    = document.getElementById('uf_role')?.value;
+  const section = document.getElementById('scopeSection');
+  const hint    = document.getElementById('roleHint');
+  if (!role) return;
+
+  const hints = {
+    super_admin:  '⚡ เข้าถึงได้ทุกอย่าง ส่ง C2 ทุกคำสั่ง จัดการ Users',
+    it_manager:   '🔧 เห็นทุก device ส่ง C2 ทุกคำสั่งรวม SHUTDOWN/RESTART',
+    regional_it:  '🗺 จำกัดตาม BU/Branch ส่ง RUN_TASK ได้',
+    branch_it:    '🏢 จำกัดตาม BU/Branch ส่ง CLEAR_TEMP, FORCE_SYNC เท่านั้น',
+    viewer:       '👁 ดูข้อมูลได้อย่างเดียว ส่ง C2 ไม่ได้',
+  };
+  if (hint) hint.textContent = hints[role] || '';
+
+  // super_admin และ it_manager ไม่ต้องกำหนด scope
+  if (section) {
+    section.style.display = ['super_admin','it_manager'].includes(role) ? 'none' : 'block';
+  }
+}
+
+// ── SAVE USER ────────────────────────────────────────────────
+async function saveUser() {
+  const email  = document.getElementById('uf_email')?.value?.trim().toLowerCase();
+  const role   = document.getElementById('uf_role')?.value;
+  if (!email || !role) { showToast('กรุณากรอกข้อมูลให้ครบ','err'); return; }
+  if (!email.includes('@')) { showToast('Email ไม่ถูกต้อง','err'); return; }
+
+  // BU checkboxes
+  const buChecked = [...document.querySelectorAll('input[name="uf_bu"]:checked')].map(el => el.value);
+  // Branch text
+  const branchRaw = (document.getElementById('uf_branch')?.value || '').trim();
+  const branches  = branchRaw ? branchRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
+
+  const payload = {
+    email,
+    role,
+    allowed_bu:     buChecked.length ? buChecked : null,
+    allowed_branch: branches.length  ? branches  : null,
+    updated_at:     new Date().toISOString(),
+  };
+
+  const saveBtn = document.getElementById('userFormSave');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ กำลังบันทึก...'; }
+
+  try {
+    let error;
+    if (EDIT_USER_ID) {
+      // UPDATE
+      ({ error } = await sb.from('sam_users').update(payload).eq('email', EDIT_USER_ID));
+    } else {
+      // INSERT
+      ({ error } = await sb.from('sam_users').insert({ ...payload, created_at: new Date().toISOString() }));
+    }
+    if (error) throw error;
+
+    showToast(`✅ ${EDIT_USER_ID ? 'แก้ไข' : 'เพิ่ม'} user "${email}" สำเร็จ`, 'ok');
+    closeOverlay('userFormOverlay');
+    await renderUserMgmtBody();
+  } catch(e) {
+    showToast('❌ บันทึกไม่สำเร็จ: ' + e.message, 'err');
+  } finally {
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '💾 บันทึก'; }
+  }
+}
+
+// ── DELETE USER ──────────────────────────────────────────────
+async function deleteUser(email) {
+  if (email === CURRENT_USER?.email) {
+    showToast('⛔ ไม่สามารถลบบัญชีของตัวเองได้', 'err');
+    return;
+  }
+  showConfirm(
+    '🗑 ลบ User',
+    `ต้องการลบ "${email}" ออกจากระบบ? User จะไม่สามารถ login ได้อีก`,
+    async () => {
+      const { error } = await sb.from('sam_users').delete().eq('email', email);
+      if (error) { showToast('❌ ลบไม่สำเร็จ: ' + error.message, 'err'); return; }
+      showToast('✅ ลบ "' + email + '" แล้ว', 'ok');
+      await renderUserMgmtBody();
+    }
+  );
+}
 </script>
 
 </body>
