@@ -931,11 +931,12 @@ async function onAuthSuccess(user) {
   const email  = user.email;
 
   // โหลด profile จาก sam_users
-  const { data: profile, error } = await sb
+  const { data: rows, error } = await sb
     .from('sam_users')
     .select('role, allowed_bu, allowed_branch')
     .eq('email', email)
-    .single();
+    .limit(1);
+  const profile = rows?.[0] || null;
 
   if (error || !profile) {
     // email ไม่อยู่ใน sam_users = ไม่มีสิทธิ์
