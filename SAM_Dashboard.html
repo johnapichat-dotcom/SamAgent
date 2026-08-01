@@ -1146,16 +1146,884 @@ function canAccessDevice(device) {
   return true;
 }
 
-// placeholder — จะถูก implement ใน Part 2
-async function loadData() { setStatus('load'); }
-function setupRealtime() {}
-function renderContent() {}
-function openUserMgmt() {}
-function openWhitelistMgmt() {}
-function openAddUser() {}
+// ============================================================
+// PART 2 — DATA LAYER + REALTIME + RENDER
+// ============================================================
+
+// ── Load Data ──────────────────────────────────────────────
+async function loadData() {
+  setStatus('load');
+  try {
+    // โหลด whitelist + devices พร้อมกัน
+    const [devRes, wlRes] = await Promise.all([
+      sb.from('sam_devices').select('*').order('updated_at', { ascending: false }),
+      sb.from('sam_whitelist').select('*').order('name')
+    ]);
+    if (devRes.error) throw devRes.error;
+    if (wlRes.error)  throw wlRes.error;
+
+    // กรอง device ตาม scope ของ user
+    ALL       = (devRes.data || []).filter(canAccessDevice);
+    WHITELIST = wlRes.data || [];
+
+    buildPage();
+    setStatus('live');
+    document.getElementById('lastSync').textContent =
+      'sync ' + new Date().toLocaleTimeString('th-TH');
+    restoreFilters();
+  } catch(e) {
+    setStatus('err');
+    document.getElementById('mainContent').innerHTML =
+      `<div style="padding:60px;text-align:center;color:var(--err2);font-size:12px">⚠ ${e.message}</div>`;
+    showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err');
+  }
+}
+
+// ── Realtime ───────────────────────────────────────────────
+function setupRealtime() {
+  if (REALTIME_CH) { sb.removeChannel(REALTIME_CH); }
+
+  REALTIME_CH = sb.channel('sam_realtime')
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: 'sam_devices' },
+      payload => handleRealtimeDevice(payload)
+    )
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: 'sam_c2_commands' },
+      payload => handleRealtimeC2(payload)
+    )
+    .subscribe(status => {
+      if (status === 'SUBSCRIBED') {
+        document.getElementById('statusBadge').innerHTML =
+          '<div class="dot"></div>LIVE · RT';
+      }
+    });
+}
+
+function handleRealtimeDevice(payload) {
+  const { eventType, new: row, old } = payload;
+  if (!canAccessDevice(row || old)) return;
+
+  if (eventType === 'INSERT') {
+    ALL.unshift(row);
+  } else if (eventType === 'UPDATE') {
+    const idx = ALL.findIndex(d =>
+      d.SerialNumber === row.SerialNumber && d.ComputerName === row.ComputerName
+    );
+    if (idx >= 0) ALL[idx] = row; else ALL.unshift(row);
+  } else if (eventType === 'DELETE') {
+    ALL = ALL.filter(d =>
+      !(d.SerialNumber === old.SerialNumber && d.ComputerName === old.ComputerName)
+    );
+  }
+  // Re-render เฉพาะตาราง (ไม่โหลดทั้งหมด)
+  applyFilter();
+  updateKPI();
+  document.getElementById('lastSync').textContent =
+    'RT ' + new Date().toLocaleTimeString('th-TH');
+}
+
+function handleRealtimeC2(payload) {
+  // อัปเดต C2 history ใน modal ถ้าเปิดอยู่
+  const modal = document.getElementById('deviceOverlay');
+  if (modal?.classList.contains('open')) {
+    const pcName = document.getElementById('devModalTitle')?.dataset.pc;
+    if (pcName) refreshC2History(pcName);
+  }
+}
+
+// ── Session persist filters ────────────────────────────────
+function saveFilters() {
+  try {
+    sessionStorage.setItem('sam_q',    document.getElementById('qSearch')?.value || '');
+    sessionStorage.setItem('sam_st',   document.getElementById('fStatus')?.value || '');
+    sessionStorage.setItem('sam_rv',   document.getElementById('fVNC')?.value    || '');
+    sessionStorage.setItem('sam_fa',   document.getElementById('fAdmin')?.value  || '');
+    sessionStorage.setItem('sam_sync', SYNC_FILTER);
+    sessionStorage.setItem('sam_sw',   SW_FILTER);
+  } catch(e) {}
+}
+function restoreFilters() {
+  try {
+    const q    = sessionStorage.getItem('sam_q')    || '';
+    const st   = sessionStorage.getItem('sam_st')   || '';
+    const rv   = sessionStorage.getItem('sam_rv')   || '';
+    const fa   = sessionStorage.getItem('sam_fa')   || '';
+    const sync = parseInt(sessionStorage.getItem('sam_sync')) || 0;
+    const sw   = sessionStorage.getItem('sam_sw')   || '';
+    if (document.getElementById('qSearch'))  document.getElementById('qSearch').value  = q;
+    if (document.getElementById('fStatus'))  document.getElementById('fStatus').value  = st;
+    if (document.getElementById('fVNC'))     document.getElementById('fVNC').value     = rv;
+    if (document.getElementById('fAdmin'))   document.getElementById('fAdmin').value   = fa;
+    SYNC_FILTER  = sync; SW_FILTER = sw; ADMIN_FILTER = fa;
+    if (q || st || rv || fa || sync || sw) applyFilter();
+  } catch(e) {}
+}
+
+// ── Build Page ─────────────────────────────────────────────
+function buildPage() {
+  buildTabs();
+  renderContent();
+}
+
+function buildTabs() {
+  const bus = [...new Set(ALL.map(r => r.BU).filter(Boolean))].sort();
+  const tabs = [{ label: 'ทั้งหมด', value: 'ALL' }, ...bus.map(b => ({ label: b, value: b }))];
+  document.getElementById('buTabs').innerHTML = tabs.map(t =>
+    `<div class="tab${t.value === CURRENT_BU ? ' active' : ''}"
+      onclick="switchBU('${t.value}')">${t.label}</div>`
+  ).join('');
+}
+
+function switchBU(bu) {
+  CURRENT_BU = bu;
+  document.querySelectorAll('.tab').forEach(t =>
+    t.classList.toggle('active', t.textContent === (bu === 'ALL' ? 'ทั้งหมด' : bu))
+  );
+  renderContent();
+}
+
+// ── Render Content ─────────────────────────────────────────
+function renderContent() {
+  const data = CURRENT_BU === 'ALL' ? ALL : ALL.filter(r => r.BU === CURRENT_BU);
+  const now  = Date.now();
+
+  // KPI calcs
+  const total  = data.length;
+  const ok     = data.filter(r => sc(r) >= 8).length;
+  const warn   = data.filter(r => sc(r) >= 5 && sc(r) < 8).length;
+  const err    = data.filter(r => sc(r) < 5).length;
+  const branches = new Set(data.map(r => r.BranchID).filter(Boolean)).size;
+  const avg    = total ? (data.reduce((a,r) => a + sc(r), 0) / total).toFixed(1) : '0';
+  const sync3  = data.filter(r => msSince(r) > 3*3600000).length;
+  const sync12 = data.filter(r => msSince(r) > 12*3600000).length;
+  const sync24 = data.filter(r => msSince(r) > 24*3600000).length;
+  const admOk  = data.filter(r => checkAdmin(r).status === 'ok').length;
+  const admWarn= data.filter(r => checkAdmin(r).status === 'warn').length;
+
+  document.getElementById('mainContent').innerHTML = `
+    <div class="kpi-row">
+      ${kpi('info','เครื่องทั้งหมด',total,branches+' สาขา')}
+      ${kpi('ok','ปกติ ≥8',ok,pct(ok,total)+'%')}
+      ${kpi('warn','เฝ้าระวัง 5–7',warn,pct(warn,total)+'%')}
+      ${kpi('err','วิกฤต <5',err,pct(err,total)+'%')}
+      ${kpi('pur','คะแนนเฉลี่ย',avg,'/ 10')}
+      ${kpiSync('warn','Sync >3ชม.',sync3,sync3>0?'ตรวจสอบ':'OK',3)}
+      ${kpiSync('ora','Sync >12ชม.',sync12,sync12>0?'หยุดทำงาน?':'OK',12)}
+      ${kpiSync('err','Sync >24ชม.',sync24,sync24>0?'ออฟไลน์?':'OK',24)}
+      ${kpiClick('ok','🛡 จำกัดสิทธิ',admOk,pct(admOk,total)+'%','ok')}
+      ${kpiClick('warn','⚠ ไม่จำกัด',admWarn,pct(admWarn,total)+'%','warn')}
+    </div>
+    <div id="filterTags" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px"></div>
+    <div class="main-wrap">
+      <div class="left-col">
+        <div class="panel panel-indigo">
+          <div class="phdr">
+            <div class="phdr-title">📋 รายการอุปกรณ์</div>
+            <span class="phdr-sub" id="rowCount">${total} รายการ</span>
+          </div>
+          <div class="fbar">
+            <input class="finput" id="qSearch" placeholder="🔍 ค้นหาชื่อเครื่อง, IP, สาขา..." oninput="applyFilter()">
+            <select class="fselect" id="fStatus" onchange="applyFilter()">
+              <option value="">ทุกสถานะ</option>
+              <option value="ok">ปกติ</option>
+              <option value="warn">เฝ้าระวัง</option>
+              <option value="err">วิกฤต</option>
+            </select>
+            <select class="fselect" id="fVNC" onchange="applyFilter()">
+              <option value="">Remote ทั้งหมด</option>
+              <option value="vnc">UltraVNC</option>
+              <option value="tv">TeamViewer</option>
+              <option value="ad">AnyDesk</option>
+            </select>
+            <select class="fselect" id="fAdmin" onchange="ADMIN_FILTER=this.value;applyFilter()">
+              <option value="">สิทธิ ทั้งหมด</option>
+              <option value="ok">🛡 จำกัดแล้ว</option>
+              <option value="warn">⚠ ยังไม่จำกัด</option>
+            </select>
+          </div>
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr>
+                <th onclick="sortBy('ComputerName')">เครื่อง ↕</th>
+                <th onclick="sortBy('BranchID')">สาขา ↕</th>
+                <th>IP / MAC</th>
+                <th onclick="sortBy('DeviceType')">Type ↕</th>
+                <th onclick="sortBy('BU')">BU ↕</th>
+                <th>Antivirus</th>
+                <th>Firewall</th>
+                <th>Remote</th>
+                <th>สิทธิ</th>
+                <th onclick="sortBy('Uptime')">Uptime ↕</th>
+                <th onclick="sortBy('StabilityScore')">Score ↕</th>
+                <th>Reboot</th>
+                <th onclick="sortBy('LastSyncTH')">Sync ↕</th>
+              </tr></thead>
+              <tbody id="tBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="bot-row" style="grid-template-columns:1fr 1fr">
+          <div class="panel panel-cyan">
+            <div class="phdr"><div class="phdr-title">💾 Disk C: ตามสาขา</div></div>
+            <div class="disk-legend">
+              <div class="dl-item">🟢 ≥20%</div><div class="dl-item">🟡 &lt;20%</div>
+              <div class="dl-item">🟠 &lt;10%</div><div class="dl-item">🔴 &lt;5%</div>
+            </div>
+            <div class="chart-scroll" id="diskChart"></div>
+          </div>
+          <div class="panel panel-orange">
+            <div class="phdr"><div class="phdr-title">⏱ HDD/SSD อายุการใช้งาน</div></div>
+            <div class="hdd-legend">
+              <div class="hl-item"><span class="hr-badge hr-l1" style="font-size:7px">L1</span>≤10k</div>
+              <div class="hl-item"><span class="hr-badge hr-l2" style="font-size:7px">L2</span>~20k</div>
+              <div class="hl-item"><span class="hr-badge hr-l3" style="font-size:7px">L3</span>~30k</div>
+              <div class="hl-item"><span class="hr-badge hr-l4" style="font-size:7px">L4</span>~35k</div>
+              <div class="hl-item"><span class="hr-badge hr-l5" style="font-size:7px">L5</span>&gt;35k</div>
+            </div>
+            <div class="chart-scroll" id="hddChart"></div>
+          </div>
+        </div>
+
+        <div class="summary-row">
+          <div class="panel panel-ok">
+            <div class="phdr"><div class="phdr-title">🪟 OS Version</div></div>
+            <div class="chart-scroll" id="osChart"></div>
+          </div>
+          <div class="panel panel-purple">
+            <div class="phdr">
+              <div class="phdr-title">🖥 ประเภทอุปกรณ์</div>
+              <span class="phdr-sub" id="dtSub">—</span>
+            </div>
+            <div class="chart-scroll" id="deviceTypeChart"></div>
+          </div>
+          <div class="panel">
+            <div class="phdr">
+              <div class="phdr-title">🏭 Manufacturer</div>
+              <span class="phdr-sub" id="mfgSub">—</span>
+            </div>
+            <div class="chart-scroll" id="mfgChart"></div>
+          </div>
+        </div>
+
+        <div class="panel panel-err" id="swPanel">
+          <div class="phdr">
+            <div class="phdr-title">🚫 โปรแกรมนอก Whitelist</div>
+            <span class="phdr-sub" id="swSummary">—</span>
+          </div>
+          <div id="swChart"></div>
+        </div>
+      </div>
+
+      <div class="right-col">
+        <div class="panel panel-indigo">
+          <div class="phdr"><div class="phdr-title">🔍 รายละเอียด</div></div>
+          <div class="detail-empty" id="detailEmpty">👆 คลิกที่แถว<br>เพื่อดูรายละเอียด</div>
+          <div id="detailBody" style="display:none"></div>
+        </div>
+        <div class="panel panel-warn">
+          <div class="phdr"><div class="phdr-title">⚠ แจ้งเตือนด่วน</div></div>
+          <div id="alertBox"></div>
+        </div>
+      </div>
+    </div>`;
+
+  FILTERED = data.slice();
+  SYNC_FILTER = 0; SW_FILTER = '';
+  sortRows(); renderTable();
+  renderAlerts(data);
+  renderOSChart(data); renderDiskChart(data); renderHDDChart(data);
+  renderDeviceTypeChart(data); renderMfgChart(data);
+  renderUnauthorizedSW(data);
+  updateFilterTags();
+}
+
+// ── KPI update (realtime ไม่ render ทั้งหน้า) ──────────────
+function updateKPI() {
+  const data = CURRENT_BU === 'ALL' ? ALL : ALL.filter(r => r.BU === CURRENT_BU);
+  // อัปเดต row count เท่านั้น
+  const rc = document.getElementById('rowCount');
+  if (rc) rc.textContent = FILTERED.length + ' รายการ';
+}
+
+// ── Filter ─────────────────────────────────────────────────
+function applyFilter() {
+  saveFilters();
+  const base = CURRENT_BU === 'ALL' ? ALL : ALL.filter(r => r.BU === CURRENT_BU);
+  const q    = (document.getElementById('qSearch')?.value || '').toLowerCase();
+  const st   = document.getElementById('fStatus')?.value  || '';
+  const rv   = document.getElementById('fVNC')?.value     || '';
+  const fa   = document.getElementById('fAdmin')?.value   || '';
+  ADMIN_FILTER = fa;
+  const now  = Date.now();
+
+  FILTERED = base.filter(r => {
+    if (SYNC_FILTER > 0 && msSince(r) <= SYNC_FILTER * 3600000) return false;
+    if (SW_FILTER) {
+      const sw = (r.AllSoftware || '').toLowerCase();
+      if (!sw.includes(SW_FILTER.toLowerCase())) return false;
+    }
+    if (fa) { if (checkAdmin(r).status !== fa) return false; }
+    const txt = ((r.ComputerName||'')+(r.BranchID||'')+(r.IPAddress||'')+(r.Province||'')).toLowerCase();
+    if (q && !txt.includes(q)) return false;
+    if (st) {
+      const s = sc(r);
+      if (st==='ok'   && s < 8)          return false;
+      if (st==='warn' && (s<5 || s>=8))  return false;
+      if (st==='err'  && s >= 5)         return false;
+    }
+    if (rv==='vnc' && !hasVNC(r))          return false;
+    if (rv==='tv'  && !cleanTV(r.TeamViewerID)) return false;
+    if (rv==='ad'  && !cleanAD(r.AnyDeskID))    return false;
+    return true;
+  });
+  sortRows(); renderTable(); updateFilterTags();
+}
+
+function setSyncFilter(hrs) {
+  SYNC_FILTER = SYNC_FILTER === hrs ? 0 : hrs;
+  [3,12,24].forEach(h => document.getElementById('kpi-sync-'+h)?.classList.toggle('kpi-active', SYNC_FILTER===h));
+  applyFilter();
+}
+function setAdminFilter(st) {
+  ADMIN_FILTER = ADMIN_FILTER === st ? '' : st;
+  const el = document.getElementById('fAdmin');
+  if (el) el.value = ADMIN_FILTER;
+  applyFilter();
+}
+function filterBySW(name) {
+  SW_FILTER = SW_FILTER === name ? '' : name;
+  applyFilter();
+  document.querySelector('.tbl-wrap')?.scrollIntoView({ behavior:'smooth' });
+}
+function updateFilterTags() {
+  const tag = document.getElementById('filterTags');
+  if (!tag) return;
+  let html = '';
+  if (SYNC_FILTER > 0)
+    html += `<span class="filter-tag" onclick="setSyncFilter(${SYNC_FILTER})">🕐 Sync >${SYNC_FILTER}ชม. · ${FILTERED.length} เครื่อง ✕</span>`;
+  if (SW_FILTER)
+    html += `<span class="filter-tag sw-tag" onclick="filterBySW('${SW_FILTER.replace(/'/g,"\\'")}')">🚫 ${SW_FILTER.substring(0,25)}${SW_FILTER.length>25?'...':''} ✕</span>`;
+  tag.innerHTML = html;
+  tag.style.display = html ? 'flex' : 'none';
+}
+function scrollToSW() { document.getElementById('swPanel')?.scrollIntoView({ behavior:'smooth' }); }
+
+// ── Sort + Table ───────────────────────────────────────────
+function sortBy(col) {
+  SORT.asc = SORT.col === col ? !SORT.asc : true;
+  SORT.col = col;
+  sortRows(); renderTable();
+}
+function sortRows() {
+  FILTERED.sort((a,b) => {
+    let va = a[SORT.col]||'', vb = b[SORT.col]||'';
+    if (SORT.col === 'StabilityScore') { va = parseFloat(va)||0; vb = parseFloat(vb)||0; }
+    return SORT.asc ? (va<vb?-1:va>vb?1:0) : (va>vb?-1:va<vb?1:0);
+  });
+}
+function renderTable() {
+  const rc = document.getElementById('rowCount');
+  if (rc) rc.textContent = FILTERED.length + ' รายการ';
+  const tb = document.getElementById('tBody');
+  if (!tb) return;
+  if (!FILTERED.length) {
+    tb.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:36px;color:var(--text3);font-size:11px">ไม่พบข้อมูล</td></tr>';
+    return;
+  }
+  tb.innerHTML = FILTERED.map((r,i) => {
+    const s = sc(r), scCls = s>=8?'score-hi':s>=5?'score-md':'score-lo';
+    const av1=(r.Antivirus1||'').toLowerCase(), av2=(r.Antivirus2||'').toLowerCase();
+    const hasTrend = av1.includes('trend')||av2.includes('trend')||av1.includes('apex')||av2.includes('apex');
+    const hasDef   = av1.includes('defender')||av2.includes('defender');
+    const avChip   = hasTrend ? chip('ok','✅ Trend') : hasDef ? chip('ok','✅ Def') : chip('err','❌');
+    const fwOff    = !(r.Firewall||'').includes('ON');
+    let remChip = '';
+    if (hasVNC(r))          remChip += '<span class="chip chip-vnc">VNC</span>';
+    if (cleanTV(r.TeamViewerID)) remChip += '<span class="chip chip-tv">TV</span>';
+    if (cleanAD(r.AnyDeskID))   remChip += '<span class="chip chip-ad">AD</span>';
+    if (!remChip) remChip = '<span style="color:var(--text3);font-size:9px">—</span>';
+    const reboot = (r.PendingReboot||'').includes('Restart');
+    const macStr = (r.MACAddress||'').split(' ')[0];
+    const adm    = checkAdmin(r);
+    const admChip = adm.status==='ok'
+      ? '<span class="chip chip-admin-ok">🛡</span>'
+      : adm.status==='warn'
+        ? '<span class="chip chip-admin-warn">⚠</span>'
+        : '<span class="chip chip-admin-na">—</span>';
+    return `<tr onclick="selRow(${i},this)">
+      <td><div class="cn">${r.ComputerName||'—'}</div><div class="sub-txt">${r.ComputerDesc||''}</div></td>
+      <td><div>${r.BranchID||'—'}</div><div class="sub-txt">${r.Province||''}</div></td>
+      <td><div class="mono">${cleanIP(r.IPAddress)}</div><div class="mono">${macStr||'—'}</div></td>
+      <td style="color:var(--text2)">${r.DeviceType||'—'}</td>
+      <td style="color:var(--text2)">${r.BU||'—'}</td>
+      <td>${avChip}</td>
+      <td>${fwOff ? chip('warn','OFF') : chip('ok','ON')}</td>
+      <td>${remChip}</td>
+      <td>${admChip}</td>
+      <td>${uptimeChipFn(r.Uptime||'')}</td>
+      <td><span class="${scCls}">${s}/10</span></td>
+      <td>${reboot ? chip('warn','รอ') : '—'}</td>
+      <td style="color:var(--text3);font-size:9px;font-family:'JetBrains Mono',monospace">${timeSince(r.LastSyncTH||r.updated_at)}</td>
+    </tr>`;
+  }).join('');
+}
+function selRow(i, el) {
+  document.querySelectorAll('#tBody tr').forEach(r => r.classList.remove('sel'));
+  el.classList.add('sel');
+  showDetail(FILTERED[i]);
+}
+
+// ── Detail Panel (right col) ───────────────────────────────
+function showDetail(r) {
+  document.getElementById('detailEmpty').style.display = 'none';
+  const s = sc(r), scCls = s>=8?'score-hi':s>=5?'score-md':'score-lo';
+  const idx = ALL.indexOf(r);
+
+  let remHTML = '<div class="dsec-ttl">🖥 Remote Access</div>';
+  let hasRem  = false;
+  if (hasVNC(r)) {
+    remHTML += `<div class="remote-item"><span class="remote-name" style="color:var(--vnc)">🟡 UltraVNC</span><span class="remote-ip">${cleanIP(r.IPAddress)}</span></div>`;
+    hasRem = true;
+  }
+  const tvId = cleanTV(r.TeamViewerID);
+  if (tvId) {
+    remHTML += `<div class="remote-item"><span class="remote-name" style="color:var(--tv)">🔵 TeamViewer</span><a href="teamviewer10://control?device=${tvId}" class="remote-ip" style="text-decoration:none;color:var(--tv)">${tvId}</a></div>`;
+    hasRem = true;
+  }
+  const adId = cleanAD(r.AnyDeskID);
+  if (adId) {
+    remHTML += `<div class="remote-item"><span class="remote-name" style="color:var(--ad)">🔴 AnyDesk</span><span class="remote-ip">${adId}</span></div>`;
+    hasRem = true;
+  }
+  if (!hasRem) remHTML += '<div style="color:var(--text3);font-size:10px">ไม่พบ Remote Software</div>';
+
+  const adm    = checkAdmin(r);
+  let admHTML  = `<div class="dsec-ttl">${adm.status==='ok'?'🛡 จำกัดสิทธิแล้ว':adm.status==='warn'?'⚠ ยังไม่จำกัดสิทธิ':'— ไม่มีข้อมูล'}</div>`;
+  adm.users.forEach(u => {
+    const icCls = u.type==='guest'?'au-guest':u.type==='sys'?'au-sys':u.isUser?'au-user':'au-admin';
+    const ico   = u.type==='guest'?'👤':u.type==='sys'?'⚙':u.isUser?'👤':'🔓';
+    const rCls  = u.isUser
+      ? 'background:var(--ok-bg);color:var(--ok2);border:1px solid rgba(16,185,129,.25)'
+      : 'background:var(--warn-bg);color:var(--warn2);border:1px solid rgba(245,158,11,.25)';
+    admHTML += `<div class="admin-user-row"><div class="au-icon ${icCls}">${ico}</div><span class="au-name">${u.name}</span><span class="au-role" style="${rCls}">${u.role}</span></div>`;
+  });
+
+  document.getElementById('detailBody').innerHTML = `
+    <div class="detail-pc">${r.ComputerName||'—'}</div>
+    <div class="detail-loc">${r.BranchID||''} · ${r.Province||''} · ${r.BU||''}</div>
+    <div class="score-ring">
+      <div class="score-big ${scCls}">${s}</div>
+      <div class="score-lbl">Stability Score / 10</div>
+    </div>
+    <div class="dsec">
+      <div class="dsec-ttl">ฮาร์ดแวร์</div>
+      ${drow('Model',r.Model||'—')}${drow('Type',r.DeviceType||'—')}
+      ${drow('CPU',(r.CPU||'—').replace(/\(.*?\)/g,'').trim())}
+      ${drow('RAM',(r.RAM||'—').split('(')[0].trim())}
+      ${drow('Uptime',r.Uptime||'—')}
+    </div>
+    <div class="dsec">
+      <div class="dsec-ttl">เครือข่าย</div>
+      ${drow('IP',cleanIP(r.IPAddress))}${drow('MAC',(r.MACAddress||'—').split(' ')[0])}
+    </div>
+    <div class="dsec">
+      <div class="dsec-ttl">ความปลอดภัย</div>
+      ${drow('OS',(r.OSVersion||'—').replace('Microsoft Windows ',''))}
+      ${drow('AV1',(r.Antivirus1||'—').split('(')[0].trim())}
+      ${drow('AV2',(r.Antivirus2||'—').split('(')[0].trim())}
+      ${drow('Firewall',r.Firewall||'—')}
+    </div>
+    <div class="dsec">${admHTML}</div>
+    <div class="dsec">${remHTML}</div>
+    <div class="dsec" style="border:none">
+      <button class="btn btn-primary" style="width:100%;justify-content:center"
+        onclick="openDevModal(${idx})">🔍 รายละเอียดเต็ม + ส่งคำสั่ง C2</button>
+    </div>`;
+  document.getElementById('detailBody').style.display = 'block';
+}
+
+// ── Full Device Modal ──────────────────────────────────────
+async function openDevModal(i) {
+  const r = ALL[i];
+  const title = document.getElementById('devModalTitle');
+  title.textContent = `${r.ComputerName||'รายละเอียด'} — ${r.BU||''}`;
+  title.dataset.pc  = r.ComputerName || '';
+
+  const sw  = (r.AllSoftware||'').split('|').map(s=>s.trim()).filter(Boolean);
+  const pr  = (r.AllPrinters||'').split('|').map(s=>s.trim()).filter(Boolean);
+  const wlNames = WHITELIST.map(w => w.name.toLowerCase());
+  const swTags  = sw.slice(0,80).map(s => {
+    const sl     = s.toLowerCase();
+    const isVNC  = sl.includes('ultravnc')||sl.includes('uvnc');
+    const isAuth = wlNames.some(w => sl.includes(w) || w.includes(sl.substring(0,Math.min(w.length,15))));
+    return `<span class="tag${isVNC?' tag-vnc':!isAuth?' tag-unauth':''}">${s}</span>`;
+  }).join('') + (sw.length>80?`<span class="tag">+${sw.length-80} more</span>`:'');
+
+  // RAM slots
+  const ramRaw = r.RAM || '—';
+  const ramTotal = ramRaw.split('(')[0].trim();
+  let ramHTML = `<div class="fc-key">RAM</div><div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:6px">${ramTotal}</div>`;
+  const slotMatches = ramRaw.match(/\[([^\]]+)\]\s*([^|[\]]*)/g) || [];
+  slotMatches.forEach(sm => {
+    const m = sm.match(/\[([^\]]+)\]\s*(.*)/);
+    if (!m) return;
+    const empty = !m[2].trim() || /empty|n\/a/i.test(m[2]);
+    ramHTML += `<div class="ram-slot">
+      <div class="ram-slot-icon ${empty?'ram-empty':'ram-active'}">${empty?'—':'✓'}</div>
+      <span class="ram-slot-name">${m[1].trim()}</span>
+      <span class="ram-slot-info">${empty?'Empty slot':m[2].trim()}</span>
+    </div>`;
+  });
+
+  const adm = checkAdmin(r);
+  let admModalHTML = `<div class="field-card full"><div class="fc-key">สิทธิ Admin ${
+    adm.status==='ok'?'<span style="color:var(--ok2)">🛡 จำกัดแล้ว</span>':
+    adm.status==='warn'?'<span style="color:var(--warn2)">⚠ ยังไม่จำกัด</span>':'— ไม่มีข้อมูล'
+  }</div>`;
+  adm.users.forEach(u => {
+    const icCls = u.type==='guest'?'au-guest':u.type==='sys'?'au-sys':u.isUser?'au-user':'au-admin';
+    const ico   = u.type==='guest'?'👤':u.type==='sys'?'⚙':u.isUser?'👤':'🔓';
+    const rCls  = u.isUser
+      ? 'background:var(--ok-bg);color:var(--ok2);border:1px solid rgba(16,185,129,.25)'
+      : 'background:var(--warn-bg);color:var(--warn2);border:1px solid rgba(245,158,11,.25)';
+    admModalHTML += `<div class="admin-user-row"><div class="au-icon ${icCls}">${ico}</div><span class="au-name">${u.name}</span><span class="au-role" style="${rCls}">${u.role}</span></div>`;
+  });
+  admModalHTML += '</div>';
+
+  const avBadge = v => {
+    if (!v||v==='—') return '<span style="color:var(--text3)">— ไม่มี</span>';
+    const sl=v.toLowerCase(), isTrend=sl.includes('trend')||sl.includes('apex'), isDef=sl.includes('defender');
+    return `<span style="color:${isTrend?'var(--ok2)':isDef?'var(--indigo2)':'var(--warn2)'}">${isTrend?'✅':isDef?'🛡':'⚠'} ${v}</span>`;
+  };
+
+  document.getElementById('devModalBody').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="field-grid">
+        ${fc('Serial',r.SerialNumber||'—')}${fc('Agent',r.AgentVersion||'—')}
+        ${fc('Manufacturer',r.Manufacturer||'—')}${fc('DeviceType',r.DeviceType||'—')}
+        ${fc('Model',r.Model||'—',true)}${fc('CPU',r.CPU||'—',true)}
+        <div class="field-card full">${ramHTML}</div>
+        ${fc('IP',r.IPAddress||'—',true)}
+        ${fc('OS',(r.OSVersion||'—').replace('Microsoft Windows ',''),true)}
+        <div class="field-card full"><div class="fc-key">Antivirus 1</div><div class="fc-val">${avBadge(r.Antivirus1||'')}</div></div>
+        <div class="field-card full"><div class="fc-key">Antivirus 2</div><div class="fc-val">${avBadge(r.Antivirus2||'')}</div></div>
+        ${fc('Uptime',r.Uptime||'—')}${fc('Boot',r.BootPerf||'—')}
+        ${fc('Disk Health',r.DiskHealth||'—',true)}${fc('Drive Space',r.DriveSpace||'—',true)}
+        ${fc('BitLocker',r.BitLocker||'—',true)}${fc('WinUpdate',r.WinUpdate||'—',true)}
+        ${fc('TeamViewer',r.TeamViewerID||'—')}${fc('AnyDesk',r.AnyDeskID||'—')}
+        ${fc('MAC',r.MACAddress||'—')}${fc('Monitor SN',r.MonitorSN||'—')}
+        ${fc('Pending Reboot',r.PendingReboot||'—')}${fc('Stability Score',r.StabilityScore||'—')}
+        ${admModalHTML}
+        ${pr.length?`<div class="field-card full"><div class="fc-key">Printers (${pr.length})</div><div class="tag-list">${pr.map(p=>`<span class="tag">${p}</span>`).join('')}</div></div>`:''}
+        ${sw.length?`<div class="field-card full"><div class="fc-key">Software (${sw.length}) — <span style="color:var(--purple)">🔵 VNC</span> <span style="color:var(--err2)">🔴 นอก whitelist</span></div><div class="tag-list">${swTags}</div></div>`:''}
+      </div>
+      <!-- C2 Section — render โดย Part 3 -->
+      <div id="c2Section"></div>
+    </div>`;
+
+  // render C2 section (Part 3 จะ implement)
+  renderC2Section(r);
+  openOverlay('deviceOverlay');
+}
+
+// ── Alerts ─────────────────────────────────────────────────
+function renderAlerts(data) {
+  const crits = data.filter(r => sc(r)<5 || (r.PendingReboot||'').includes('Restart'));
+  const badge = document.getElementById('alertBadge');
+  if (crits.length) { badge.style.display='inline'; badge.textContent=crits.length; }
+  else              { badge.style.display='none'; }
+
+  const makeItem = r => {
+    const s=sc(r), issues=[], cls=s<5?'ai-crit':'ai-warn', ico=s<5?'✕':'!';
+    if (s<5) issues.push('Score '+s+'/10');
+    if ((r.PendingReboot||'').includes('Restart')) issues.push('รอ Restart');
+    return `<div class="alert-item ${cls}">
+      <div class="ai-icon">${ico}</div>
+      <div>
+        <div class="ai-ttl">${r.ComputerName||'—'}</div>
+        <div class="ai-sub">${issues.join(' · ')}</div>
+        <div class="ai-loc">${r.BranchID||''} · ${r.Province||''} · ${r.BU||''}</div>
+      </div>
+    </div>`;
+  };
+
+  const box = document.getElementById('alertBox');
+  if (box) box.innerHTML = crits.length
+    ? crits.slice(0,10).map(makeItem).join('')
+    : '<div style="padding:20px;text-align:center;color:var(--text3);font-size:10px">✅ ไม่มีการแจ้งเตือน</div>';
+  document.getElementById('alertModalBody').innerHTML = crits.length
+    ? crits.map(makeItem).join('')
+    : 'ไม่มีการแจ้งเตือน';
+}
+
+// ── OS Chart ───────────────────────────────────────────────
+function renderOSChart(data) {
+  const map = {};
+  data.forEach(r => {
+    const v = r.OSVersion||'Unknown';
+    let key='อื่นๆ', ed='';
+    if (v.includes('IoT Enterprise')) ed='IoT LTSC';
+    else if (v.includes('Enterprise')) ed='Enterprise';
+    else if (/\bHome\b/i.test(v)) ed='Home';
+    else if (/\bPro\b/i.test(v)) ed='Pro';
+    else if (v.includes('Server')) ed='Server';
+    const m11=v.match(/11.*?(\d{2}H\d)/), m10=v.match(/10.*?(\d{2}H\d)/);
+    if (m11) key='Win 11 '+(m11[1]||'');
+    else if (m10) key='Win 10 '+(m10[1]||'');
+    else if (v.includes('Server')) key='Server';
+    const fk = key+(ed?' | '+ed:'');
+    map[fk]=(map[fk]||0)+1;
+  });
+  const tot=data.length||1, el=document.getElementById('osChart');
+  if (!el) return;
+  el.innerHTML = Object.entries(map).sort((a,b)=>b[1]-a[1]).map(([k,v]) => {
+    const parts=k.split(' | '), ver=parts[0], ed=parts[1]||'';
+    const c=ver.includes('11')?'#34d399':ver.includes('10')?'#818cf8':ver.includes('Server')?'#fbbf24':'#5b6580';
+    const p=Math.round(v/tot*100);
+    const edBadge = ed==='Pro'?'<span class="os-ed ed-pro">Pro</span>':
+      ed==='Home'?'<span class="os-ed ed-home">Home</span>':
+      ed.includes('IoT')?'<span class="os-ed ed-iot">IoT LTSC</span>':
+      ed==='Enterprise'?'<span class="os-ed ed-ent">Enterprise</span>':
+      ed==='Server'?'<span class="os-ed ed-srv">Server</span>':'';
+    return `<div class="os-row">
+      <div class="os-dot" style="background:${c}"></div>
+      <span class="os-name">${ver}${edBadge}</span>
+      <div class="os-bar"><div class="os-bar-fill" style="width:${p}%;background:${c}"></div></div>
+      <span class="os-pct">${p}%</span>
+      <span class="os-cnt">${v}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Disk Chart ─────────────────────────────────────────────
+function renderDiskChart(data) {
+  const map={};
+  data.forEach(r => {
+    const b=r.BranchID||'Unknown', ds=r.DriveSpace||'';
+    const mC=ds.match(/\[C:\]\s*([\d.]+)%\s*\(([\d.]+)\/([\d.]+)\s*GB\)/);
+    if (mC) {
+      const freePct=Math.round(100-parseFloat(mC[1])), freeGB=parseFloat(mC[2]), totalGB=parseFloat(mC[3]);
+      if (!map[b]||freePct<map[b].freePct) map[b]={freePct,freeGB:freeGB.toFixed(1),totalGB:totalGB.toFixed(1)};
+    }
+  });
+  const el=document.getElementById('diskChart');
+  if (!el) return;
+  const sorted=Object.entries(map).sort((a,b)=>a[1].freePct-b[1].freePct).slice(0,20);
+  if (!sorted.length) { el.innerHTML='<div style="padding:14px;color:var(--text3);font-size:10px">ไม่มีข้อมูล</div>'; return; }
+  el.innerHTML=sorted.map(([b,v]) => {
+    const free=v.freePct;
+    const c=free>=20?'var(--ok2)':free>=10?'var(--warn2)':free>=5?'var(--orange)':'var(--err2)';
+    const ico=free>=20?'🟢':free>=10?'🟡':free>=5?'🟠':'🔴';
+    const gbInfo=free<10?`<span style="font-size:9px;color:${c};font-family:'JetBrains Mono',monospace">[C:] ${v.freeGB}/${v.totalGB}GB</span>`:'';
+    return `<div class="br-row">
+      <span class="br-name">${b}</span>
+      <div class="br-bar"><div class="br-fill" style="width:${Math.min(free,100)}%;background:${c}"></div></div>
+      <span class="br-pct" style="color:${c}">${free}%</span>${gbInfo}
+      <span class="br-icon">${ico}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── HDD Chart ──────────────────────────────────────────────
+function renderHDDChart(data) {
+  const rows=[];
+  data.forEach(r => {
+    const dh=r.DiskHealth||'', mH=dh.match(/Hrs:([\d,]+)\s*hrs/i);
+    if (mH) {
+      const hrs=parseInt(mH[1].replace(/,/g,'')), mo=dh.match(/Model:([\w\s]+)\|/);
+      rows.push({branch:r.BranchID||'Unknown',hrs,model:mo?mo[1].trim():'',pc:r.ComputerName||''});
+    }
+  });
+  rows.sort((a,b)=>b.hrs-a.hrs);
+  const el=document.getElementById('hddChart');
+  if (!el) return;
+  if (!rows.length) { el.innerHTML='<div style="padding:14px;color:var(--text3);font-size:10px">ไม่มีข้อมูล</div>'; return; }
+  el.innerHTML=rows.slice(0,15).map(row => {
+    const [lvl,cls]=row.hrs<=10000?['L1','hr-l1']:row.hrs<=20000?['L2','hr-l2']:row.hrs<=30000?['L3','hr-l3']:row.hrs<=35000?['L4','hr-l4']:['L5','hr-l5'];
+    return `<div class="hr-row">
+      <span class="hr-name">${row.branch}</span>
+      <span class="hr-badge ${cls}">${lvl}</span>
+      <span class="hr-detail">${row.hrs.toLocaleString()} hrs · ${row.model} (${row.pc})</span>
+    </div>`;
+  }).join('');
+}
+
+// ── DeviceType + Mfg Charts ────────────────────────────────
+function renderDeviceTypeChart(data) {
+  const map={};
+  data.forEach(r => { const t=(r.DeviceType||'Unknown').trim(); map[t]=(map[t]||0)+1; });
+  const sorted=Object.entries(map).sort((a,b)=>b[1]-a[1]);
+  const tot=data.length||1, el=document.getElementById('deviceTypeChart'), sub=document.getElementById('dtSub');
+  if (!el) return;
+  if (sub) sub.textContent=sorted.length+' ประเภท';
+  const colors=['#818cf8','#34d399','#a78bfa','#fb923c','#f87171','#fbbf24','#60a5fa','#4ade80'];
+  el.innerHTML=sorted.map(([t,v],i) => {
+    const p=Math.round(v/tot*100), c=colors[i%colors.length];
+    return `<div class="sum-item">
+      <span class="sum-lbl" style="font-weight:600;color:var(--text)">${t}</span>
+      <div class="sum-bar"><div class="sum-bar-fill" style="width:${p}%;background:${c}"></div></div>
+      <span class="sum-cnt" style="color:${c}">${v}</span>
+    </div>`;
+  }).join('');
+}
+function renderMfgChart(data) {
+  const map={};
+  data.forEach(r => {
+    const mfg=(r.Manufacturer||'Unknown').trim();
+    const model=(r.Model||'').trim().split(' ').slice(0,4).join(' ');
+    const key=mfg+(model?' · '+model:'');
+    map[key]=(map[key]||0)+1;
+  });
+  const sorted=Object.entries(map).sort((a,b)=>b[1]-a[1]);
+  const tot=data.length||1, el=document.getElementById('mfgChart'), sub=document.getElementById('mfgSub');
+  if (!el) return;
+  if (sub) sub.textContent=sorted.length+' รุ่น';
+  el.innerHTML=sorted.slice(0,20).map(([k,v]) => {
+    const p=Math.round(v/tot*100);
+    return `<div class="sum-item">
+      <span class="sum-lbl">${k}</span>
+      <div class="sum-bar"><div class="sum-bar-fill" style="width:${p}%"></div></div>
+      <span class="sum-cnt">${v}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Unauthorized SW ────────────────────────────────────────
+function renderUnauthorizedSW(data) {
+  const el=document.getElementById('swChart'), sum=document.getElementById('swSummary');
+  const badge=document.getElementById('swBadge');
+  if (!el) return;
+  if (!WHITELIST.length) {
+    el.innerHTML='<div style="padding:14px;color:var(--text3);font-size:10px">ไม่มี Whitelist — ไปที่ ⚙ Whitelist เพื่อเพิ่ม</div>';
+    if (sum) sum.textContent='ไม่มี whitelist';
+    return;
+  }
+  const wlNames = WHITELIST.map(w => w.name.toLowerCase());
+  const found={};
+  data.forEach(r => {
+    const sw=(r.AllSoftware||'').split('|').map(s=>s.trim()).filter(Boolean);
+    const br=r.BranchID||'Unknown';
+    sw.forEach(s => {
+      const sl=s.toLowerCase();
+      const inList=wlNames.some(w => sl===w || sl.startsWith(w.substring(0,Math.min(w.length,20))));
+      if (!inList) {
+        if (!found[s]) found[s]={branches:new Set(),count:0};
+        found[s].branches.add(br);
+        found[s].count++;
+      }
+    });
+  });
+  const sorted=Object.entries(found).sort((a,b)=>b[1].count-a[1].count).slice(0,30);
+  if (!sorted.length) {
+    el.innerHTML='<div style="padding:14px;text-align:center;color:var(--ok2);font-size:10px">✅ ไม่พบโปรแกรมนอก whitelist</div>';
+    if (sum) sum.textContent='ผ่านทั้งหมด';
+    if (badge) badge.style.display='none';
+    return;
+  }
+  if (sum) sum.textContent=sorted.length+' รายการ';
+  if (badge) { badge.style.display='inline'; badge.textContent=sorted.length; }
+  el.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr;gap:0">'+
+    sorted.map(([name,v]) => {
+      const branches=[...v.branches].slice(0,3).join(', ')+(v.branches.size>3?' +'+(v.branches.size-3):'');
+      const esc=name.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+      return `<div class="sw-row" onclick="filterBySW('${esc}')">
+        <span class="sw-name">${name}</span>
+        <span class="sw-branch">${branches}</span>
+        <span class="sw-badge">${v.count}</span>
+      </div>`;
+    }).join('')+'</div>';
+}
+
+// ── C2 Section placeholder (Part 3 จะ override) ───────────
+function renderC2Section(r) {
+  const el = document.getElementById('c2Section');
+  if (!el) return;
+  if (!hasRole('branch_it')) {
+    el.innerHTML = '<div class="no-access">🔒 ไม่มีสิทธิ์ส่งคำสั่ง C2</div>';
+    return;
+  }
+  el.innerHTML = `<div class="cmd-box">
+    <div class="fc-key" style="margin-bottom:6px">💻 Remote Command (C2)</div>
+    <div style="color:var(--text3);font-size:10px;padding:8px 0">⏳ กำลังโหลด C2 Module...</div>
+  </div>`;
+}
+
+// placeholder C2 history — Part 3
+async function refreshC2History(pcName) {}
+
+// ── Admin check ────────────────────────────────────────────
+function checkAdmin(r) {
+  const au=(r.ActiveUsers||'').trim();
+  if (!au) return {status:'na',label:'—',users:[]};
+  const parts=au.split('|').map(s=>s.trim()).filter(Boolean);
+  const users=[]; let hasRestricted=false;
+  parts.forEach(p => {
+    const m=p.match(/^(.+?)\s*\((Admin|Administrator|User)\)\s*$/i);
+    if (!m) return;
+    const name=m[1].trim(), role=m[2];
+    const isGuest=name.toLowerCase()==='guest';
+    const isSys=name.toLowerCase()==='administrator'||/_admin$/i.test(name)||/^admin$/i.test(name);
+    const type=isGuest?'guest':isSys?'sys':'main';
+    const isUser=role.toLowerCase()==='user';
+    users.push({name,role,type,isUser});
+    if (type==='main'&&isUser) hasRestricted=true;
+  });
+  if (!users.length) return {status:'na',label:'—',users:[]};
+  return {status:hasRestricted?'ok':'warn',label:hasRestricted?'🛡':'⚠',users};
+}
+
+// ── Utility helpers ────────────────────────────────────────
+function sc(r)  { return parseFloat(r.StabilityScore)||0; }
+function pct(n,d){ return d?Math.round(n/d*100):0; }
+function msSince(r) {
+  const d=new Date(r.LastSyncTH||r.updated_at);
+  return isNaN(d)?Infinity:Date.now()-d;
+}
+function chip(t,txt) { return `<span class="chip chip-${t}">${txt}</span>`; }
+function drow(k,v)   { return `<div class="drow"><span class="dk">${k}</span><span class="dv">${v}</span></div>`; }
+function fc(k,v,full){ return `<div class="field-card${full?' full':''}"><div class="fc-key">${k}</div><div class="fc-val">${v}</div></div>`; }
+function kpi(cls,lbl,val,sub) {
+  return `<div class="kpi ${cls}"><div class="kpi-lbl">${lbl}</div><div class="kpi-val">${val}</div><div class="kpi-sub">${sub}</div></div>`;
+}
+function kpiSync(cls,lbl,val,sub,hrs) {
+  const c=val>0?cls:'ok', active=SYNC_FILTER===hrs?' kpi-active':'';
+  return `<div class="kpi ${c} clickable${active}" id="kpi-sync-${hrs}" onclick="setSyncFilter(${hrs})">
+    <div class="kpi-lbl">${lbl}</div><div class="kpi-val">${val}</div><div class="kpi-sub">${sub}</div>
+  </div>`;
+}
+function kpiClick(cls,lbl,val,sub,fv) {
+  return `<div class="kpi ${cls} clickable" onclick="setAdminFilter('${fv}')">
+    <div class="kpi-lbl">${lbl}</div><div class="kpi-val">${val}</div><div class="kpi-sub">${sub}</div>
+  </div>`;
+}
+function hasVNC(r) { const sw=(r.AllSoftware||'').toLowerCase(); return sw.includes('ultravnc')||sw.includes('uvnc'); }
+function cleanIP(s){ return s?(s.split(' ')[0].trim()||'—'):'—'; }
+function cleanTV(s){ const v=(s||'').replace(/[^0-9]/g,''); return v||''; }
+function cleanAD(s){ const v=(s||'').replace(/[^0-9]/g,''); return v||''; }
+function uptimeChipFn(s) {
+  const m=s.match(/(\d+)\s*วัน/);
+  if (!m) return '<span style="color:var(--text3);font-size:9px">—</span>';
+  const d=parseInt(m[1]);
+  return d<=7?`<span class="chip chip-up-ok">${d}วัน</span>`:
+    d<=30?`<span class="chip chip-up-warn">${d}วัน !</span>`:
+    `<span class="chip chip-up-err">${d}วัน ⚠</span>`;
+}
+function timeSince(s) {
+  if (!s) return '—';
+  try {
+    const m=Math.floor((Date.now()-new Date(s))/60000);
+    return m<60?m+'น.':m<1440?Math.floor(m/60)+'ชม.':Math.floor(m/1440)+'วัน';
+  } catch(e){ return '—'; }
+}
+
+// placeholders Part 3
+function openUserMgmt()     {}
+function openWhitelistMgmt(){}
+function openAddUser()      {}
 function openAddWhitelist() {}
-async function saveUser() {}
-function scrollToSW() {}
+async function saveUser()   {}
 </script>
 
 </body>
