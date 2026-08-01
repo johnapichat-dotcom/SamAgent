@@ -1140,10 +1140,17 @@ function canAccessDevice(device) {
   if (hasRole('it_manager')) return true;
   const profile = USER_PROFILE;
   if (!profile) return false;
-  const bu = profile.allowed_bu;
-  const br = profile.allowed_branch;
-  if (bu && bu.length && !bu.includes(device.BU)) return false;
-  if (br && br.length && !br.includes(device.BranchID)) return false;
+
+  // parse text → array
+  const bu = profile.allowed_bu
+    ? profile.allowed_bu.replace(/[{}"]/g,'').split(',').map(s=>s.trim()).filter(Boolean)
+    : [];
+  const br = profile.allowed_branch
+    ? profile.allowed_branch.replace(/[{}"]/g,'').split(',').map(s=>s.trim()).filter(Boolean)
+    : [];
+
+  if (bu.length && !bu.includes(device.BU)) return false;
+  if (br.length && !br.includes(device.BranchID)) return false;
   return true;
 }
 
