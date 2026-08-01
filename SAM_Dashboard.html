@@ -930,24 +930,21 @@ async function onAuthSuccess(user) {
   CURRENT_USER = user;
   const email  = user.email;
 
-  // โหลด profile จาก sam_users
   const { data: rows, error } = await sb
     .from('sam_users')
-    .select('role, allowed_bu, allowed_branch')
+    .select('role')
     .eq('email', email)
     .limit(1);
-  const profile = rows?.[0] || null;
 
-  if (error || !profile) {
-    // email ไม่อยู่ใน sam_users = ไม่มีสิทธิ์
+  if (error || !rows || rows.length === 0) {
     await sb.auth.signOut();
     showLoginPage();
     showToast('⛔ ไม่มีสิทธิ์เข้าใช้งาน กรุณาติดต่อ IT Admin', 'err');
     return;
   }
 
-  USER_PROFILE = profile;
-  showAppPage(user, profile);
+  USER_PROFILE = { role: rows[0].role, allowed_bu: null, allowed_branch: null };
+  showAppPage(user, USER_PROFILE);
   await loadData();
   setupRealtime();
 }
