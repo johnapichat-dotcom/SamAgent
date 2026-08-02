@@ -840,7 +840,7 @@ td{padding:7px 10px;white-space:nowrap;max-width:160px;overflow:hidden;text-over
 // ============================================================
 const SUPABASE_URL  = 'https://xabvhfoosmqyrbkohmof.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhhYnZoZm9vc21xeXJia29obW9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3NDg2NDAsImV4cCI6MjA5MzMyNDY0MH0.12i8J50IPfEkTcq7xFJz54rA4MLARcHOsTtibi1iG2s';
-const GITHUB_PAGES_URL = 'https://johnapichat-dotcom.github.io/SamAgent/SAM_Dashboard.html'; // redirect URI
+const GITHUB_PAGES_URL = 'https://johnapichat-dotcom.github.io/SAM_Dashboard_v4.html'; // redirect URI
 
 // ============================================================
 // SUPABASE CLIENT
@@ -882,22 +882,36 @@ const BU_LIST    = ['Station','OLP','Punthai','PunthaiFC','MaxMart','ATL','Oil d
 // ============================================================
 window.addEventListener('DOMContentLoaded', async () => {
   loadTheme();
-  // ตรวจ session ปัจจุบัน
-  const { data: { session } } = await sb.auth.getSession();
-  if (session) {
-    await onAuthSuccess(session.user);
-  } else {
-    showLoginPage();
-  }
 
-  // ฟัง auth state changes (OAuth callback)
+  // ── ฟัง auth state changes ก่อน (รับ OAuth callback) ──
+  let authHandled = false;
   sb.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_IN' && session) {
+    if (event === 'SIGNED_IN' && session && !authHandled) {
+      authHandled = true;
       await onAuthSuccess(session.user);
     } else if (event === 'SIGNED_OUT') {
       showLoginPage();
     }
   });
+
+  // ── รอให้ Supabase parse hash token จาก URL (OAuth redirect) ──
+  const hash = window.location.hash;
+  if (hash && hash.includes('access_token')) {
+    // Supabase กำลัง parse token — รอ onAuthStateChange จัดการ
+    await new Promise(r => setTimeout(r, 1500));
+    // ลบ hash ออกจาก URL ให้สะอาด
+    if (window.location.hash) history.replaceState(null, '', window.location.pathname);
+    if (authHandled) return; // onAuthStateChange จัดการแล้ว
+  }
+
+  // ── ไม่มี hash → ตรวจ session เดิม ──
+  const { data: { session } } = await sb.auth.getSession();
+  if (session && !authHandled) {
+    authHandled = true;
+    await onAuthSuccess(session.user);
+  } else if (!authHandled) {
+    showLoginPage();
+  }
 });
 
 // ============================================================
@@ -930,6 +944,7 @@ async function onAuthSuccess(user) {
   CURRENT_USER = user;
   const email  = user.email;
 
+  // โหลด profile จาก sam_users (select เฉพาะ role — หลีกเลี่ยง ARRAY column 500)
   const { data: rows, error } = await sb
     .from('sam_users')
     .select('role')
@@ -1137,17 +1152,10 @@ function canAccessDevice(device) {
   if (hasRole('it_manager')) return true;
   const profile = USER_PROFILE;
   if (!profile) return false;
-
-  // parse text → array
-  const bu = profile.allowed_bu
-    ? profile.allowed_bu.replace(/[{}"]/g,'').split(',').map(s=>s.trim()).filter(Boolean)
-    : [];
-  const br = profile.allowed_branch
-    ? profile.allowed_branch.replace(/[{}"]/g,'').split(',').map(s=>s.trim()).filter(Boolean)
-    : [];
-
-  if (bu.length && !bu.includes(device.BU)) return false;
-  if (br.length && !br.includes(device.BranchID)) return false;
+  const bu = profile.allowed_bu;
+  const br = profile.allowed_branch;
+  if (bu && bu.length && !bu.includes(device.BU)) return false;
+  if (br && br.length && !br.includes(device.BranchID)) return false;
   return true;
 }
 
@@ -1941,23 +1949,6 @@ function renderUnauthorizedSW(data) {
     }).join('')+'</div>';
 }
 
-// ── C2 Section placeholder (Part 3 จะ override) ───────────
-function renderC2Section(r) {
-  const el = document.getElementById('c2Section');
-  if (!el) return;
-  if (!hasRole('branch_it')) {
-    el.innerHTML = '<div class="no-access">🔒 ไม่มีสิทธิ์ส่งคำสั่ง C2</div>';
-    return;
-  }
-  el.innerHTML = `<div class="cmd-box">
-    <div class="fc-key" style="margin-bottom:6px">💻 Remote Command (C2)</div>
-    <div style="color:var(--text3);font-size:10px;padding:8px 0">⏳ กำลังโหลด C2 Module...</div>
-  </div>`;
-}
-
-// placeholder C2 history — Part 3
-async function refreshC2History(pcName) {}
-
 // ── Admin check ────────────────────────────────────────────
 function checkAdmin(r) {
   const au=(r.ActiveUsers||'').trim();
@@ -2537,17 +2528,17 @@ async function openEditUser(email) {
   EDIT_USER_ID = email;
   document.getElementById('userFormTitle').textContent = '✏ แก้ไข User';
 
-  const { data, error } = await sb.from('sam_users').select('*').eq('email', email).single();
-  if (error) { showToast('โหลดข้อมูล user ไม่สำเร็จ','err'); return; }
+  const { data: rows, error } = await sb.from('sam_users').select('*').eq('email', email).limit(1);
+  if (error || !rows || !rows.length) { showToast('โหลดข้อมูล user ไม่สำเร็จ','err'); return; }
 
-  renderUserForm(data);
+  renderUserForm(rows[0]);
   openOverlay('userFormOverlay');
 }
 
 function renderUserForm(user) {
   const isEdit = !!user;
   const buChecked = bu => user?.allowed_bu?.includes(bu) ? 'checked' : '';
-  const branchVal = user?.allowed_branch?.join(', ') || '';
+  const branchVal = user?.allowed_branch || '';
 
   document.getElementById('userFormBody').innerHTML = `
     <div class="form-group">
