@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>S.A.M. — Smart Asset Management V4</title>
+<title>S.A.M. — Smart Asset Management </title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -677,6 +677,7 @@ td{padding:7px 10px;white-space:nowrap;max-width:160px;overflow:hidden;text-over
     <button class="btn" id="btnUsers" onclick="openUserMgmt()" style="display:none">👥 Users <span class="btn-badge" id="usersBadge" style="display:none"></span></button>
     <button class="btn" id="btnWhitelist" onclick="openWhitelistMgmt()" style="display:none">⚙ Whitelist</button>
     <button class="btn" id="btnNotify" onclick="openNotifyMgmt()" style="display:none">📝 ข้อความ</button>
+    <button class="btn" id="btnTaskMgr" onclick="openTaskMgmt()" style="display:none">📜 Tasks</button>
     <!-- Common buttons -->
     <button class="btn" onclick="openOverlay('alertOverlay')">🔔 แจ้งเตือน<span class="btn-badge" id="alertBadge" style="display:none"></span></button>
     <button class="btn" onclick="scrollToSW()">🚫 SW <span class="btn-badge" id="swBadge" style="display:none"></span></button>
@@ -810,6 +811,37 @@ td{padding:7px 10px;white-space:nowrap;max-width:160px;overflow:hidden;text-over
     </div>
     <div class="modal-body" id="whitelistBody">
       <div class="loading"><div class="spinner"></div>กำลังโหลด...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Task Manager Modal -->
+<div class="overlay" id="taskMgrOverlay">
+  <div class="modal modal-lg">
+    <div class="modal-hdr">
+      <h3>📜 Task Manager</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary btn-sm" onclick="openAddTask()">+ เพิ่ม Task</button>
+        <button class="mclose" onclick="closeOverlay('taskMgrOverlay')">&times;</button>
+      </div>
+    </div>
+    <div class="modal-body" id="taskMgrBody">
+      <div class="loading"><div class="spinner"></div>กำลังโหลด...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Task Add/Edit Modal -->
+<div class="overlay" id="taskFormOverlay">
+  <div class="modal" style="width:560px">
+    <div class="modal-hdr">
+      <h3 id="taskFormTitle">เพิ่ม Task</h3>
+      <button class="mclose" onclick="closeOverlay('taskFormOverlay')">&times;</button>
+    </div>
+    <div class="modal-body" id="taskFormBody"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeOverlay('taskFormOverlay')">ยกเลิก</button>
+      <button class="btn btn-primary" onclick="saveTask()">💾 บันทึก</button>
     </div>
   </div>
 </div>
@@ -1013,6 +1045,7 @@ function showAppPage(user, profile) {
   if (lvl >= 5) document.getElementById('btnUsers').style.display      = 'inline-flex';
   if (lvl >= 4) document.getElementById('btnWhitelist').style.display  = 'inline-flex';
   if (lvl >= 4) document.getElementById('btnNotify').style.display     = 'inline-flex';
+  if (lvl >= 4) document.getElementById('btnTaskMgr').style.display    = 'inline-flex';
 }
 
 // ============================================================
@@ -2080,31 +2113,53 @@ const C2_COMMANDS = [
   { cmd:'RUN_TASK',        label:'📜 Run Task',     minRole:'regional_it', desc:'รันสคริปต์จาก /Task/' },
 ];
 
-const TASK_FILES = [
-  'Task_AppInstall.ps1',
-  'Task_AppUninstall.ps1',
-  'Task_LogCollector.ps1',
-  'Task_NetPwrConfig.ps1',
-  'Task_PrtRemove.ps1',
-  'Task_RunCmd.ps1',
-  'Task_SysRename.ps1',
-  'Task_UsrManage.ps1',
-  'Task_WinRepair.ps1',
+// Task files — default fallback ถ้า GitHub API ไม่ตอบ
+const TASK_FILES_DEFAULT = [
+  'Task_AppInstall.ps1','Task_AppUninstall.ps1',
+  'Task_LogCollector.ps1','Task_NetPwrConfig.ps1',
+  'Task_PrtRemove.ps1','Task_RunCmd.ps1',
+  'Task_SchedulerConfig.ps1','Task_SysRename.ps1',
+  'Task_UsrManage.ps1','Task_WinRepair.ps1',
 ];
+let TASK_FILES = [...TASK_FILES_DEFAULT];
 
-// Task parameter fields
-const TASK_PARAMS = {
-  'Task_SysRename.ps1':    [{ key:'NewName',  label:'ชื่อใหม่',        placeholder:'BKK-STN-001' }],
-  'Task_AppInstall.ps1':   [{ key:'AppName',  label:'ชื่อโปรแกรม',     placeholder:'Chrome' }, { key:'Silent', label:'Silent Install', placeholder:'true' }],
-  'Task_AppUninstall.ps1': [{ key:'AppName',  label:'ชื่อโปรแกรม',     placeholder:'Chrome' }],
-  'Task_UsrManage.ps1':    [{ key:'Username', label:'Username',        placeholder:'john' }, { key:'Action', label:'Action', placeholder:'disable' }],
-  'Task_RunCmd.ps1':       [{ key:'Command',  label:'คำสั่ง',          placeholder:'ipconfig /flushdns' }],
-  'Task_PrtRemove.ps1':    [{ key:'PrinterName', label:'ชื่อ Printer', placeholder:'HP LaserJet' }],
-  'Task_NetPwrConfig.ps1': [{ key:'Profile',  label:'Power Profile',   placeholder:'Balanced' }],
-};
+// โหลด task files จาก GitHub API (auto-detect)
+async function fetchTaskFiles() {
+  try {
+    const res = await fetch(
+      'https://api.github.com/repos/johnapichat-dotcom/SamAgent/contents/Task',
+      { cache: 'no-cache', headers: { 'Accept': 'application/vnd.github.v3+json' } }
+    );
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const files = data
+      .filter(f => f.type === 'file' && f.name.endsWith('.ps1'))
+      .map(f => f.name)
+      .sort();
+    if (files.length > 0) { TASK_FILES = files; }
+  } catch(e) {
+    console.warn('[SAM] fetchTaskFiles fallback:', e.message);
+    TASK_FILES = [...TASK_FILES_DEFAULT];
+  }
+}
+
+// Task definitions cache (จาก Supabase)
+let TASK_DEFS = [];
+
+async function fetchTaskDefs() {
+  try {
+    const { data, error } = await sb
+      .from('sam_task_definitions').select('*').order('sort_order');
+    if (error) throw error;
+    if (data && data.length > 0) {
+      TASK_DEFS = data;
+      TASK_FILES = data.map(d => d.filename);
+    }
+  } catch(e) { console.warn('[SAM] fetchTaskDefs:', e.message); }
+}
 
 // ── RENDER C2 SECTION IN MODAL ──────────────────────────────
-function renderC2Section(r) {
+async function renderC2Section(r) {
   const el = document.getElementById('c2Section');
   if (!el) return;
 
@@ -2113,66 +2168,68 @@ function renderC2Section(r) {
     return;
   }
 
-  // กรอง command ตาม role
-  const allowedCmds = C2_COMMANDS.filter(c => hasRole(c.minRole));
+  if (hasRole('regional_it')) {
+    el.innerHTML = `<div class="cmd-box"><div class="fc-key">💻 Remote Command (C2)</div>
+      <div style="color:var(--text3);font-size:10px;padding:8px 0">
+        <div class="spinner spinner-sm" style="display:inline-block;vertical-align:middle;margin-right:6px"></div>
+        กำลังโหลด Task list...
+      </div></div>`;
+    await fetchTaskDefs();
+  }
+
+  const allowedCmds  = C2_COMMANDS.filter(c => hasRole(c.minRole));
+  const allowedTasks = TASK_DEFS.filter(t => hasRole(t.min_role));
 
   const presetBtns = allowedCmds
     .filter(c => c.cmd !== 'RUN_TASK')
     .map(c => `<button class="btn btn-sm" title="${c.desc}"
         onclick="selectC2Cmd('${c.cmd}','${r.SerialNumber}','${r.ComputerName}')">
-        ${c.label}
-      </button>`).join('');
+        ${c.label}</button>`).join('');
 
   const taskSection = hasRole('regional_it') ? `
     <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-      <select class="fselect" id="taskSelect" onchange="onTaskSelect()" style="flex:1;min-width:160px">
+      <select class="fselect" id="taskSelect"
+        onchange="onTaskSelect('${(r.SerialNumber||'').replace(/'/g,"\\'")}','${(r.ComputerName||'').replace(/'/g,"\\'")}')"
+        style="flex:1;min-width:200px">
         <option value="">— เลือก Task Script —</option>
-        ${TASK_FILES.map(f=>`<option value="${f}">${f}</option>`).join('')}
+        ${allowedTasks.map(t=>`<option value="${t.filename}">${t.label} (${t.filename})</option>`).join('')}
       </select>
     </div>
-    <div id="taskParamsBox" style="display:none;margin-top:6px;display:none"></div>
+    <div id="taskParamsBox" style="margin-top:6px"></div>
     <div style="margin-top:6px">
-      <button class="btn btn-sm btn-purple" onclick="selectC2Cmd('RUN_TASK','${r.SerialNumber}','${r.ComputerName}')">
-        📜 ส่ง Run Task
-      </button>
+      <button class="btn btn-sm btn-purple"
+        onclick="selectC2Cmd('RUN_TASK','${r.SerialNumber}','${r.ComputerName}')">
+        📜 ส่ง Run Task</button>
     </div>` : '';
 
-  el.innerHTML = `
-    <div class="cmd-box">
-      <div class="fc-key" style="margin-bottom:6px">
-        💻 Remote Command (C2)
-        <span style="color:var(--text3);font-weight:400;margin-left:6px">
-          ${r.ComputerName} · ${r.BU}
-        </span>
+  el.innerHTML = `<div class="cmd-box">
+      <div class="fc-key" style="margin-bottom:6px">💻 Remote Command (C2)
+        <span style="color:var(--text3);font-weight:400;margin-left:6px">${r.ComputerName} · ${r.BU}</span>
       </div>
-
       <div class="cmd-presets">${presetBtns}</div>
       ${taskSection}
-
       <div class="cmd-row" style="margin-top:10px">
         <input class="cmd-input" id="cmdPreview" placeholder="คำสั่งที่จะส่ง..." readonly
           style="background:var(--bg);color:var(--indigo2);font-weight:600">
         <button class="btn btn-danger" id="btnSendC2"
-          onclick="sendC2Command('${r.SerialNumber}','${r.ComputerName}')" disabled>
-          ▶ ส่ง
-        </button>
+          onclick="sendC2Command('${r.SerialNumber}','${r.ComputerName}')" disabled>▶ ส่ง</button>
       </div>
-
       <div style="font-size:9px;color:var(--text3);margin-top:5px;font-family:'JetBrains Mono',monospace">
-        คำสั่งจะถูกเก็บใน sam_c2_commands · Agent รับคำสั่งภายใน 40 นาที
-      </div>
-
-      <!-- C2 History -->
+        คำสั่งจะถูกเก็บใน sam_c2_commands · Agent รับคำสั่งภายใน 40 นาที</div>
       <div class="c2-history" id="c2HistoryBox">
-        <div class="c2-history-title">ประวัติล่าสุด (5 รายการ)</div>
+        <div class="c2-history-title">ประวัติล่าสุด</div>
         <div style="color:var(--text3);font-size:10px;padding:4px 0">
           <div class="spinner spinner-sm" style="display:inline-block;vertical-align:middle;margin-right:6px"></div>
-          กำลังโหลด...
-        </div>
+          กำลังโหลด...</div>
       </div>
     </div>`;
 
-  // โหลด C2 history
+  // เก็บข้อมูลเครื่องสำหรับ smart params
+  el.dataset.sw    = r.AllSoftware || '';
+  el.dataset.pr    = r.AllPrinters || '';
+  el.dataset.users = r.ActiveUsers || '';
+  el.dataset.cn    = r.ComputerName || '';
+
   refreshC2History(r.ComputerName, r.SerialNumber);
 }
 
@@ -2205,44 +2262,127 @@ function selectC2Cmd(cmd, serial, pc) {
   sendBtn.style.opacity = '1';
 }
 
-function onTaskSelect() {
+function onTaskSelect(serial, pc) {
   const task = document.getElementById('taskSelect')?.value;
   const box  = document.getElementById('taskParamsBox');
   if (!box) return;
 
-  const fields = TASK_PARAMS[task];
-  if (!fields || !fields.length) {
-    box.style.display = 'none';
-    box.innerHTML = '';
-    return;
-  }
+  // หา task definition จาก cache
+  const taskDef = TASK_DEFS.find(t => t.filename === task);
+  let fields = [];
+  try {
+    fields = taskDef?.parameters
+      ? (typeof taskDef.parameters === 'string'
+          ? JSON.parse(taskDef.parameters)
+          : taskDef.parameters)
+      : [];
+  } catch(e) { fields = []; }
 
-  box.style.display = 'block';
-  box.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:4px">
-      ${fields.map(f=>`
-        <div>
-          <div class="form-label" style="margin-bottom:3px">${f.label}</div>
-          <input class="form-input" id="tp_${f.key}"
-            placeholder="${f.placeholder}" style="font-size:11px;padding:5px 8px">
-        </div>`).join('')}
-    </div>`;
+  if (!fields.length) { box.innerHTML = ''; return; }
 
-  // อัปเดต preview เมื่อพิมพ์
+  // ดึงข้อมูลจากเครื่องสำหรับ smart dropdowns
+  const c2el   = document.getElementById('c2Section');
+  const swRaw  = c2el?.dataset?.sw   || '';
+  const prRaw  = c2el?.dataset?.pr   || '';
+  const usrRaw = c2el?.dataset?.users || '';
+  const cnRaw  = c2el?.dataset?.cn   || '';
+
+  const swList  = swRaw.split('|').map(s=>s.trim()).filter(Boolean).sort();
+  const prList  = prRaw.split('|').map(s=>s.trim()).filter(Boolean).sort();
+  const usrList = usrRaw.split('|').map(s=>{
+    const m = s.match(/^(.+?)\s*\(/); return m ? m[1].trim() : s.trim();
+  }).filter(Boolean);
+
+  box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:4px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+    ${fields.map(f => {
+      const fid = 'tp_' + f.key;
+      let inputHtml = '';
+
+      switch(f.type) {
+        case 'software_list':
+          inputHtml = `<select class="form-select" id="${fid}" style="font-size:11px">
+            <option value="">— เลือกโปรแกรม (${swList.length} รายการ) —</option>
+            ${swList.map(s=>`<option value="${s.replace(/"/g,'&quot;')}">${s}</option>`).join('')}
+          </select>
+          <input class="form-input" id="${fid}_custom" placeholder="หรือพิมพ์ชื่อโปรแกรม..."
+            style="font-size:11px;margin-top:4px">`;
+          break;
+
+        case 'printer_list':
+          inputHtml = `<select class="form-select" id="${fid}" style="font-size:11px">
+            <option value="">— เลือก Printer (${prList.length} รายการ) —</option>
+            ${prList.map(p=>`<option value="${p.replace(/"/g,'&quot;')}">${p}</option>`).join('')}
+          </select>`;
+          break;
+
+        case 'user_list':
+          inputHtml = `<select class="form-select" id="${fid}" style="font-size:11px">
+            <option value="">— เลือก User —</option>
+            ${usrList.map(u=>`<option value="${u}">${u}</option>`).join('')}
+          </select>`;
+          break;
+
+        case 'select':
+          const opts = Array.isArray(f.options) ? f.options : [];
+          inputHtml = `<select class="form-select" id="${fid}" style="font-size:11px">
+            ${opts.map(o=>`<option value="${o}" ${o===f.default?'selected':''}>${o}</option>`).join('')}
+          </select>`;
+          break;
+
+        case 'number':
+          inputHtml = `<input class="form-input" id="${fid}" type="number"
+            min="${f.min||1}" max="${f.max||9999}"
+            placeholder="${f.placeholder||''}" value="${f.default||''}"
+            style="font-size:11px">`;
+          break;
+
+        default: // text
+          const hint = f.key==='NewName' && cnRaw
+            ? `<div style="font-size:9px;color:var(--text3);margin-top:3px">ชื่อปัจจุบัน: ${cnRaw}</div>` : '';
+          inputHtml = `<input class="form-input" id="${fid}" type="text"
+            placeholder="${f.placeholder||''}" value="${f.default||''}"
+            style="font-size:11px">${hint}`;
+      }
+
+      return `<div ${fields.length===1?'style="grid-column:span 2"':''}>
+        <div class="form-label" style="margin-bottom:4px;font-size:10px">${f.label}</div>
+        ${inputHtml}
+      </div>`;
+    }).join('')}
+  </div>`;
+
+  // อัปเดต preview เมื่อเปลี่ยนค่า
   fields.forEach(f => {
-    document.getElementById('tp_'+f.key)?.addEventListener('input', () => {
-      if (_c2CurrentCmd === 'RUN_TASK') selectC2Cmd('RUN_TASK', _c2CurrentSerial, _c2CurrentPC);
+    const el = document.getElementById('tp_'+f.key);
+    const elCustom = document.getElementById('tp_'+f.key+'_custom');
+    if (el) el.addEventListener('change', () => {
+      if (_c2CurrentCmd==='RUN_TASK') selectC2Cmd('RUN_TASK',_c2CurrentSerial,_c2CurrentPC);
+    });
+    if (elCustom) elCustom.addEventListener('input', () => {
+      if (_c2CurrentCmd==='RUN_TASK') selectC2Cmd('RUN_TASK',_c2CurrentSerial,_c2CurrentPC);
     });
   });
 }
 
 function collectTaskParams(task) {
-  const fields = TASK_PARAMS[task];
-  if (!fields) return null;
+  const taskDef = TASK_DEFS.find(t => t.filename === task);
+  let fields = [];
+  try {
+    fields = taskDef?.parameters
+      ? (typeof taskDef.parameters === 'string'
+          ? JSON.parse(taskDef.parameters)
+          : taskDef.parameters)
+      : [];
+  } catch(e) { return null; }
+
+  if (!fields.length) return null;
   const params = {};
   fields.forEach(f => {
-    const v = document.getElementById('tp_'+f.key)?.value?.trim();
-    if (v) params[f.key] = v;
+    // ถ้ามี custom input ให้ใช้ค่า custom ก่อน (software_list)
+    const custom = document.getElementById('tp_'+f.key+'_custom')?.value?.trim();
+    const main   = document.getElementById('tp_'+f.key)?.value?.trim();
+    const val    = custom || main;
+    if (val) params[f.key] = val;
   });
   return Object.keys(params).length ? params : null;
 }
@@ -2805,6 +2945,187 @@ async function saveNotifyMsg(id) {
 
   if (error) { showToast('❌ บันทึกไม่สำเร็จ: '+error.message,'err'); return; }
   showToast('✅ บันทึกข้อความ '+id+' สำเร็จ','ok');
+}
+
+// ============================================================
+// TASK MANAGER
+// ============================================================
+let EDIT_TASK_FILE = null;
+
+async function openTaskMgmt() {
+  if (!hasRole('it_manager')) { showToast('⛔ เฉพาะ IT Manager ขึ้นไป','err'); return; }
+  openOverlay('taskMgrOverlay');
+  await renderTaskMgrBody();
+}
+
+async function renderTaskMgrBody() {
+  const body = document.getElementById('taskMgrBody');
+  body.innerHTML = '<div class="loading"><div class="spinner"></div>กำลังโหลด...</div>';
+
+  const { data, error } = await sb
+    .from('sam_task_definitions').select('*').order('sort_order');
+  if (error) { body.innerHTML=`<div style="color:var(--err2);padding:16px">⚠ ${error.message}</div>`; return; }
+
+  TASK_DEFS = data || [];
+
+  body.innerHTML = `
+    <div style="margin-bottom:10px">
+      <input class="finput" id="taskSearch" placeholder="🔍 ค้นหา..."
+        oninput="filterTaskList()" style="width:100%">
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="background:var(--bg3);border-bottom:1px solid var(--border2)">
+        <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">#</th>
+        <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">ไฟล์</th>
+        <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">ชื่อ</th>
+        <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">Role</th>
+        <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">Parameters</th>
+        <th style="padding:8px 10px;text-align:center;color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px">Action</th>
+      </tr></thead>
+      <tbody id="taskTBody">
+        ${(data||[]).map(t => {
+          let params = [];
+          try { params = typeof t.parameters==='string' ? JSON.parse(t.parameters) : (t.parameters||[]); } catch(e){}
+          const roleColor = {super_admin:'var(--err2)',it_manager:'var(--orange)',regional_it:'var(--warn2)',branch_it:'var(--indigo2)',viewer:'var(--text3)'};
+          return `<tr class="task-row" data-name="${(t.filename+t.label).toLowerCase()}"
+            style="border-bottom:1px solid var(--border);transition:background .1s"
+            onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
+            <td style="padding:8px 10px;color:var(--text3);font-size:10px">${t.sort_order}</td>
+            <td style="padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--indigo2)">${t.filename}</td>
+            <td style="padding:8px 10px;font-weight:600;font-size:11px">${t.label}
+              ${t.description?`<div style="font-size:9px;color:var(--text3);font-weight:400">${t.description}</div>`:''}
+            </td>
+            <td style="padding:8px 10px"><span style="color:${roleColor[t.min_role]||'var(--text2)'};font-size:10px;font-weight:600">${ROLE_LABEL[t.min_role]||t.min_role}</span></td>
+            <td style="padding:8px 10px">
+              ${params.map(p=>`<span class="chip chip-ok" style="font-size:8px;margin-bottom:2px">${p.key}</span>`).join(' ')}
+              ${!params.length?'<span style="color:var(--text3);font-size:9px">ไม่มี</span>':''}
+            </td>
+            <td style="padding:8px 10px;text-align:center">
+              <div style="display:flex;gap:4px;justify-content:center">
+                <button class="btn btn-sm" onclick="openEditTask('${t.filename}')">✏ แก้ไข</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteTask('${t.filename}')">🗑</button>
+              </div>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    <div style="padding-top:10px;color:var(--text3);font-size:10px;border-top:1px solid var(--border);margin-top:8px">
+      รวม ${(data||[]).length} tasks
+    </div>`;
+}
+
+function filterTaskList() {
+  const q = (document.getElementById('taskSearch')?.value||'').toLowerCase();
+  document.querySelectorAll('.task-row').forEach(el=>{
+    el.style.display = el.dataset.name.includes(q) ? '' : 'none';
+  });
+}
+
+function openAddTask() {
+  EDIT_TASK_FILE = null;
+  document.getElementById('taskFormTitle').textContent = '+ เพิ่ม Task';
+  renderTaskForm(null);
+  openOverlay('taskFormOverlay');
+}
+
+async function openEditTask(filename) {
+  EDIT_TASK_FILE = filename;
+  document.getElementById('taskFormTitle').textContent = '✏ แก้ไข Task';
+  const t = TASK_DEFS.find(d => d.filename === filename);
+  if (!t) { showToast('ไม่พบข้อมูล task','err'); return; }
+  renderTaskForm(t);
+  openOverlay('taskFormOverlay');
+}
+
+function renderTaskForm(t) {
+  let paramsStr = '[]';
+  try {
+    const p = t?.parameters;
+    paramsStr = JSON.stringify(typeof p==='string' ? JSON.parse(p) : (p||[]), null, 2);
+  } catch(e) {}
+
+  document.getElementById('taskFormBody').innerHTML = `
+    <div class="form-group">
+      <label class="form-label">ชื่อไฟล์ <span>*</span></label>
+      <input class="form-input" id="tf_filename" value="${t?.filename||''}"
+        placeholder="Task_Example.ps1"
+        ${t?'readonly style="opacity:.6;cursor:not-allowed"':''}>
+      <div class="form-hint">ต้องตรงกับชื่อไฟล์ใน GitHub /Task/</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group">
+        <label class="form-label">ชื่อแสดง <span>*</span></label>
+        <input class="form-input" id="tf_label" value="${t?.label||''}" placeholder="ติดตั้งโปรแกรม">
+      </div>
+      <div class="form-group">
+        <label class="form-label">ลำดับ</label>
+        <input class="form-input" id="tf_order" type="number" value="${t?.sort_order||99}" min="1" max="999">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">คำอธิบาย</label>
+      <input class="form-input" id="tf_desc" value="${t?.description||''}" placeholder="อธิบายสั้นๆ">
+    </div>
+    <div class="form-group">
+      <label class="form-label">สิทธิ์ขั้นต่ำ</label>
+      <select class="form-select" id="tf_role">
+        ${Object.entries(ROLE_LABEL).map(([k,v])=>
+          `<option value="${k}" ${(t?.min_role||'regional_it')===k?'selected':''}>${v}</option>`
+        ).join('')}
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Parameters (JSON Array)</label>
+      <textarea class="form-textarea" id="tf_params" rows="8"
+        style="font-family:'JetBrains Mono',monospace;font-size:11px">${paramsStr}</textarea>
+      <div class="form-hint">
+        type: text | select | number | software_list | printer_list | user_list<br>
+        ตัวอย่าง: [{"key":"AppName","label":"ชื่อโปรแกรม","type":"software_list"}]
+      </div>
+    </div>`;
+}
+
+async function saveTask() {
+  const filename = document.getElementById('tf_filename')?.value?.trim();
+  const label    = document.getElementById('tf_label')?.value?.trim();
+  const desc     = document.getElementById('tf_desc')?.value?.trim();
+  const role     = document.getElementById('tf_role')?.value;
+  const order    = parseInt(document.getElementById('tf_order')?.value)||99;
+  const paramsRaw = document.getElementById('tf_params')?.value?.trim();
+
+  if (!filename || !label) { showToast('กรุณากรอกชื่อไฟล์และชื่อแสดง','err'); return; }
+  if (!filename.endsWith('.ps1')) { showToast('ชื่อไฟล์ต้องลงท้ายด้วย .ps1','err'); return; }
+
+  let parameters = [];
+  try { parameters = JSON.parse(paramsRaw); }
+  catch(e) { showToast('❌ Parameters JSON ไม่ถูกต้อง: '+e.message,'err'); return; }
+
+  const payload = { filename, label, description:desc, min_role:role,
+                    parameters, sort_order:order, updated_at:new Date().toISOString() };
+
+  let error;
+  if (EDIT_TASK_FILE) {
+    ({ error } = await sb.from('sam_task_definitions').update(payload).eq('filename', EDIT_TASK_FILE));
+  } else {
+    ({ error } = await sb.from('sam_task_definitions').insert({...payload, created_at:new Date().toISOString()}));
+  }
+
+  if (error) { showToast('❌ บันทึกไม่สำเร็จ: '+error.message,'err'); return; }
+  showToast(`✅ ${EDIT_TASK_FILE?'แก้ไข':'เพิ่ม'} Task "${filename}" สำเร็จ`,'ok');
+  closeOverlay('taskFormOverlay');
+  await renderTaskMgrBody();
+}
+
+async function deleteTask(filename) {
+  showConfirm('🗑 ลบ Task', `ต้องการลบ "${filename}" ออกจากระบบ?\n(ไฟล์บน GitHub ไม่ถูกลบ)`,
+    async () => {
+      const { error } = await sb.from('sam_task_definitions').delete().eq('filename', filename);
+      if (error) { showToast('❌ ลบไม่สำเร็จ: '+error.message,'err'); return; }
+      showToast('✅ ลบ Task แล้ว','ok');
+      await renderTaskMgrBody();
+    }
+  );
 }
 </script>
 
