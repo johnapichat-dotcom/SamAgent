@@ -676,6 +676,7 @@ td{padding:7px 10px;white-space:nowrap;max-width:160px;overflow:hidden;text-over
     <!-- Admin-only buttons (shown by RBAC) -->
     <button class="btn" id="btnUsers" onclick="openUserMgmt()" style="display:none">👥 Users <span class="btn-badge" id="usersBadge" style="display:none"></span></button>
     <button class="btn" id="btnWhitelist" onclick="openWhitelistMgmt()" style="display:none">⚙ Whitelist</button>
+    <button class="btn" id="btnNotify" onclick="openNotifyMgmt()" style="display:none">📝 ข้อความ</button>
     <!-- Common buttons -->
     <button class="btn" onclick="openOverlay('alertOverlay')">🔔 แจ้งเตือน<span class="btn-badge" id="alertBadge" style="display:none"></span></button>
     <button class="btn" onclick="scrollToSW()">🚫 SW <span class="btn-badge" id="swBadge" style="display:none"></span></button>
@@ -813,6 +814,19 @@ td{padding:7px 10px;white-space:nowrap;max-width:160px;overflow:hidden;text-over
   </div>
 </div>
 
+<!-- Notify Messages Modal -->
+<div class="overlay" id="notifyOverlay">
+  <div class="modal" style="width:600px">
+    <div class="modal-hdr">
+      <h3>📝 ข้อความแจ้งเตือน Restart/Shutdown</h3>
+      <button class="mclose" onclick="closeOverlay('notifyOverlay')">&times;</button>
+    </div>
+    <div class="modal-body" id="notifyBody">
+      <div class="loading"><div class="spinner"></div>กำลังโหลด...</div>
+    </div>
+  </div>
+</div>
+
 <!-- Confirm Dialog -->
 <div class="overlay" id="confirmOverlay">
   <div class="modal modal-sm">
@@ -840,7 +854,7 @@ td{padding:7px 10px;white-space:nowrap;max-width:160px;overflow:hidden;text-over
 // ============================================================
 const SUPABASE_URL  = 'https://xabvhfoosmqyrbkohmof.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhhYnZoZm9vc21xeXJia29obW9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3NDg2NDAsImV4cCI6MjA5MzMyNDY0MH0.12i8J50IPfEkTcq7xFJz54rA4MLARcHOsTtibi1iG2s';
-const GITHUB_PAGES_URL = 'https://johnapichat-dotcom.github.io/SamAgent/SAM_Dashboard.html'; // redirect URI
+const GITHUB_PAGES_URL = 'https://johnapichat-dotcom.github.io/SAM_Dashboard_v4.html'; // redirect URI
 
 // ============================================================
 // SUPABASE CLIENT
@@ -998,6 +1012,7 @@ function showAppPage(user, profile) {
   const lvl = ROLE_LEVEL[profile.role] || 0;
   if (lvl >= 5) document.getElementById('btnUsers').style.display      = 'inline-flex';
   if (lvl >= 4) document.getElementById('btnWhitelist').style.display  = 'inline-flex';
+  if (lvl >= 4) document.getElementById('btnNotify').style.display     = 'inline-flex';
 }
 
 // ============================================================
@@ -1144,7 +1159,7 @@ function hasRole(minRole) {
   return (ROLE_LEVEL[USER_PROFILE?.role] || 0) >= (ROLE_LEVEL[minRole] || 99);
 }
 function canSendC2(command) {
-  const dangerous = ['SHUTDOWN','RESTART','RUN_TASK'];
+  const dangerous = ['SHUTDOWN','RESTART','SHUTDOWN_NOTIFY','RESTART_NOTIFY','RUN_TASK'];
   if (dangerous.includes(command)) return hasRole('it_manager');
   return hasRole('branch_it');
 }
@@ -1723,7 +1738,8 @@ async function openDevModal(i) {
         <div class="field-card full"><div class="fc-key">Antivirus 1</div><div class="fc-val">${avBadge(r.Antivirus1||'')}</div></div>
         <div class="field-card full"><div class="fc-key">Antivirus 2</div><div class="fc-val">${avBadge(r.Antivirus2||'')}</div></div>
         ${fc('Uptime',r.Uptime||'—')}${fc('Boot',r.BootPerf||'—')}
-        ${fc('Disk Health',r.DiskHealth||'—',true)}${fc('Drive Space',r.DriveSpace||'—',true)}
+        <div class="field-card full"><div class="fc-key">Disk Health</div><div class="fc-val" style="font-size:10px">${formatDiskHealth(r.DiskHealth)}</div></div>
+        ${fc('Drive Space',r.DriveSpace||'—',true)}
         ${fc('BitLocker',r.BitLocker||'—',true)}${fc('WinUpdate',r.WinUpdate||'—',true)}
         ${fc('TeamViewer',r.TeamViewerID||'—')}${fc('AnyDesk',r.AnyDeskID||'—')}
         ${fc('MAC',r.MACAddress||'—')}${fc('Monitor SN',r.MonitorSN||'—')}
@@ -1971,6 +1987,41 @@ function checkAdmin(r) {
 }
 
 // ── Utility helpers ────────────────────────────────────────
+// ── Disk Health Formatter ───────────────────────────────────
+function formatDiskHealth(raw) {
+  if (!raw || raw === '—') return '—';
+  // Parse: Model:xxx | Type:SSD | Status:Healthy | Temp:40°C | Health:✅ Good(99%) | Hrs:13578 hrs Model:yyy ...
+  const disks = [];
+  const parts = raw.split(/(?=Model:)/g).filter(Boolean);
+  parts.forEach(part => {
+    const p = part.trim();
+    const model  = (p.match(/Model:([^|]+)/)||['','—'])[1].trim();
+    const type   = (p.match(/Type:([^|]+)/)||['','—'])[1].trim();
+    const status = (p.match(/Status:([^|]+)/)||['','—'])[1].trim();
+    const temp   = (p.match(/Temp:([^|]+)/)||['','—'])[1].trim();
+    const health = (p.match(/Health:([^|]+)/)||['','—'])[1].trim();
+    const hrs    = (p.match(/Hrs:([^|M]+)/)||['','—'])[1].trim();
+
+    const isOk   = status.toLowerCase()==='healthy';
+    const isCrit = status.toLowerCase()==='critical';
+    const stIcon = isOk ? '🟢' : isCrit ? '🔴' : '🟡';
+    const typeC  = type.includes('SSD') ? 'color:var(--ok2)' : type.includes('HDD') ? 'color:var(--warn2)' : 'color:var(--text3)';
+
+    disks.push(`<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px">
+      <div style="font-weight:700;font-size:11px;color:var(--text);margin-bottom:4px">${stIcon} ${model}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:9px">
+        <span><span style="color:var(--text3)">Type:</span> <span style="${typeC};font-weight:600">${type}</span></span>
+        <span><span style="color:var(--text3)">Status:</span> <span style="${isOk?'color:var(--ok2)':isCrit?'color:var(--err2)':'color:var(--warn2)'}">${status}</span></span>
+        <span><span style="color:var(--text3)">Temp:</span> ${temp}</span>
+        <span><span style="color:var(--text3)">Health:</span> ${health.replace('✅','').replace('⚠','').trim()}</span>
+        <span><span style="color:var(--text3)">Hours:</span> <span style="font-weight:600">${hrs}</span></span>
+      </div>
+    </div>`);
+  });
+  return disks.length ? disks.join('') : raw;
+}
+
+// ── Utility helpers ────────────────────────────────────────
 function sc(r)  { return parseFloat(r.StabilityScore)||0; }
 function pct(n,d){ return d?Math.round(n/d*100):0; }
 function msSince(r) {
@@ -2021,10 +2072,12 @@ function timeSince(s) {
 // ── C2 COMMAND DEFINITIONS ──────────────────────────────────
 const C2_COMMANDS = [
   { cmd:'CLEAR_TEMP',  label:'🧹 Clear Temp',  minRole:'branch_it',   desc:'ลบไฟล์ชั่วคราว' },
-  { cmd:'FORCE_SYNC',  label:'🔄 Force Sync',  minRole:'branch_it',   desc:'บังคับ sync ข้อมูล' },
-  { cmd:'RESTART',     label:'🔁 Restart',     minRole:'it_manager',  desc:'รีสตาร์ทเครื่อง (30วิ)' },
-  { cmd:'SHUTDOWN',    label:'⏻ Shutdown',     minRole:'it_manager',  desc:'ปิดเครื่อง (30วิ)' },
-  { cmd:'RUN_TASK',    label:'📜 Run Task',     minRole:'regional_it', desc:'รันสคริปต์จาก /Task/' },
+  { cmd:'FORCE_SYNC',      label:'🔄 Force Sync',      minRole:'branch_it',   desc:'บังคับ sync ข้อมูล' },
+  { cmd:'RESTART_NOTIFY',  label:'🔔 Restart (แจ้งเตือน)', minRole:'it_manager', desc:'แจ้งเตือน 5 นาทีก่อน restart' },
+  { cmd:'SHUTDOWN_NOTIFY', label:'🔕 Shutdown (แจ้งเตือน)',minRole:'it_manager', desc:'แจ้งเตือน 5 นาทีก่อน shutdown' },
+  { cmd:'RESTART',         label:'🔁 Restart (บังคับ)',    minRole:'it_manager',  desc:'restart ทันที (30วิ)' },
+  { cmd:'SHUTDOWN',        label:'⏻ Shutdown (บังคับ)',   minRole:'it_manager',  desc:'ปิดเครื่องทันที (30วิ)' },
+  { cmd:'RUN_TASK',        label:'📜 Run Task',     minRole:'regional_it', desc:'รันสคริปต์จาก /Task/' },
 ];
 
 const TASK_FILES = [
@@ -2229,7 +2282,18 @@ async function sendC2Command(serial, pc) {
   if (['SHUTDOWN','RESTART'].includes(command)) {
     showConfirm(
       `⚠ ยืนยันคำสั่ง ${command}`,
-      `กำลังจะส่ง "${command}" ไปยัง ${pc} ใช่หรือไม่?`,
+      `กำลังจะส่ง "${command}" (บังคับ) ไปยัง ${pc} ใช่หรือไม่? เครื่องจะดำเนินการทันที`,
+      () => doSendC2(serial, pc, command, task_filename, task_parameters)
+    );
+    return;
+  }
+
+  // Confirm คำสั่ง Notify
+  if (['SHUTDOWN_NOTIFY','RESTART_NOTIFY'].includes(command)) {
+    const action = command === 'RESTART_NOTIFY' ? 'Restart' : 'Shutdown';
+    showConfirm(
+      `🔔 ยืนยันส่งแจ้งเตือน ${action}`,
+      `จะแสดง popup แจ้งเตือนบนหน้าจอ "${pc}" ให้ผู้ใช้ตัดสินใจ (timeout 5 นาที)`,
       () => doSendC2(serial, pc, command, task_filename, task_parameters)
     );
     return;
@@ -2670,6 +2734,77 @@ async function deleteUser(email) {
       await renderUserMgmtBody();
     }
   );
+}
+
+// ============================================================
+// NOTIFY MESSAGE MANAGEMENT
+// ============================================================
+async function openNotifyMgmt() {
+  if (!hasRole('it_manager')) { showToast('⛔ เฉพาะ IT Manager ขึ้นไป','err'); return; }
+  openOverlay('notifyOverlay');
+  await renderNotifyBody();
+}
+
+async function renderNotifyBody() {
+  const body = document.getElementById('notifyBody');
+  body.innerHTML = '<div class="loading"><div class="spinner"></div>กำลังโหลด...</div>';
+
+  const { data, error } = await sb.from('sam_notify_messages').select('*').order('id');
+  if (error) { body.innerHTML = `<div style="color:var(--err2);padding:16px">⚠ ${error.message}</div>`; return; }
+
+  body.innerHTML = (data||[]).map(msg => {
+    const icon = msg.id === 'RESTART_NOTIFY' ? '🔁' : '⏻';
+    const color = msg.id === 'RESTART_NOTIFY' ? 'var(--indigo2)' : 'var(--err2)';
+    return `
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px;border-left:3px solid ${color}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span style="font-size:18px">${icon}</span>
+        <span style="font-size:13px;font-weight:700;color:${color}">${msg.id}</span>
+        <span style="font-size:9px;color:var(--text3);margin-left:auto;font-family:'JetBrains Mono',monospace">
+          ${msg.updated_by||''} · ${msg.updated_at ? new Date(msg.updated_at).toLocaleDateString('th-TH') : ''}
+        </span>
+      </div>
+
+      <div class="form-group" style="margin-bottom:8px">
+        <label class="form-label">หัวข้อ</label>
+        <input class="form-input" id="nt_title_${msg.id}" value="${msg.title||''}"
+          style="font-size:12px">
+      </div>
+
+      <div class="form-group" style="margin-bottom:8px">
+        <label class="form-label">ข้อความ</label>
+        <textarea class="form-input" id="nt_msg_${msg.id}" rows="3"
+          style="font-size:12px;resize:vertical;min-height:60px">${msg.message||''}</textarea>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="form-group" style="margin-bottom:0;flex:0 0 120px">
+          <label class="form-label">Countdown (นาที)</label>
+          <input class="form-input" id="nt_time_${msg.id}" type="number" min="1" max="30"
+            value="${msg.timeout_minutes||5}" style="font-size:12px">
+        </div>
+        <div style="flex:1"></div>
+        <button class="btn btn-primary" onclick="saveNotifyMsg('${msg.id}')">💾 บันทึก</button>
+      </div>
+    </div>`;
+  }).join('') || '<div style="color:var(--text3);padding:20px;text-align:center">ไม่พบข้อความ</div>';
+}
+
+async function saveNotifyMsg(id) {
+  const title   = document.getElementById('nt_title_'+id)?.value?.trim();
+  const message = document.getElementById('nt_msg_'+id)?.value?.trim();
+  const timeout = parseInt(document.getElementById('nt_time_'+id)?.value) || 5;
+
+  if (!title || !message) { showToast('กรุณากรอกให้ครบ','err'); return; }
+
+  const { error } = await sb.from('sam_notify_messages').update({
+    title, message, timeout_minutes: timeout,
+    updated_by: CURRENT_USER.email,
+    updated_at: new Date().toISOString()
+  }).eq('id', id);
+
+  if (error) { showToast('❌ บันทึกไม่สำเร็จ: '+error.message,'err'); return; }
+  showToast('✅ บันทึกข้อความ '+id+' สำเร็จ','ok');
 }
 </script>
 
