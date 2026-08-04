@@ -1,6 +1,6 @@
 ﻿# ==============================================================================
 # S.A.M. AGENT  (Smart Agent Management - Data Collector & Sync Engine)
-# VERSION     : 3.1.0
+# VERSION     : 3.2.0
 # FILE        : SAM_Agent.ps1
 # ROLE        : เก็บข้อมูลระบบ → เปรียบเทียบ Delta → Sync ไป Supabase
 #               ถูกเรียกโดย SAM_Scheduler เท่านั้น (ไม่รัน Task เอง)
@@ -18,7 +18,7 @@ param(
 # ==========================================
 # CONSTANTS
 # ==========================================
-$SAM_VERSION   = "3.1.0"
+$SAM_VERSION   = "3.2.0"
 $WorkDir       = "C:\IT_Support"
 $LogFile       = "$WorkDir\SAM_Log.txt"
 $StateFile     = "$WorkDir\LastState.json"   # { Hash, FieldHashes, LastFullSync, LastWriteTime }
@@ -551,21 +551,61 @@ $CombOS  = "$($OS.Caption) ($ExactOS)"
 # CPU
 $CPU = Get-CimInstance Win32_Processor
 
-# RAM
+# RAM — Improved Slot Detection
 $MemArray  = Get-CimInstance Win32_PhysicalMemoryArray -ErrorAction SilentlyContinue
 $TotalSlots = if ($MemArray -and $MemArray.MemoryDevices) { $MemArray.MemoryDevices } else { 0 }
 $PhyRAM    = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction SilentlyContinue)
 $RamCount  = if ($PhyRAM[0]) { $PhyRAM.Count } else { 0 }
 if ($TotalSlots -lt $RamCount) { $TotalSlots = $RamCount }
-$RamList   = @(); $TotalRAM = 0
+if ($TotalSlots -le 0) { $TotalSlots = 2 }
+
+$TotalRAM = 0; $SlotInfos = @($null) * $TotalSlots; $UsedSlots = @()
+
 foreach ($S in $PhyRAM) {
-    $GB = [math]::Round($S.Capacity/1GB)
-    $TotalRAM += $GB
-    $SMT = $S.SMBIOSMemoryType
-    $DDR = if($SMT-eq 34){"DDR5"} elseif($SMT-eq 26){"DDR4"} elseif($SMT-eq 24){"DDR3"} elseif($SMT-eq 21){"DDR2"} else{"Unknown"}
-    $RamList += "[$($S.DeviceLocator)] $($GB)GB $DDR ($($S.Speed) MHz)"
+    $GB = [math]::Round($S.Capacity/1GB); $TotalRAM += $GB
+    $SMT = $S.SMBIOSMemoryType; $Speed = $S.Speed
+    $DDR = switch ($SMT) {
+        34 { 'DDR5' }; 26 { 'DDR4' }; 24 { 'DDR3' }; 21 { 'DDR2' }; 20 { 'DDR' }
+        default {
+            if     ($Speed -ge 4800) { 'DDR5' }
+            elseif ($Speed -ge 2133) { 'DDR4' }
+            elseif ($Speed -ge 800)  { 'DDR3' }
+            elseif ($Speed -ge 400)  { 'DDR2' }
+            else   { 'DDR' }
+        }
+    }
+    $Mfg = ($S.Manufacturer -replace '\s+',' ').Trim()
+    if ($Mfg -match 'Unknown|N/A|^$|Undefined|017A') { $Mfg = '' }
+    $InfoStr = "${GB}GB ${DDR} (${Speed} MHz)"
+    if ($Mfg) { $InfoStr += " $Mfg" }
+
+    $Locator = ($S.DeviceLocator -replace '\s+','').Trim()
+    $Bank    = ($S.BankLabel -replace '\s+','').Trim()
+
+    # หา slot index
+    $SlotIdx = -1
+    if     ($Locator -match 'DIMM[_\s]?(\d+)')       { $SlotIdx = [int]$matches[1] }
+    elseif ($Locator -match 'Channel([A-D])-?DIMM(\d+)') { $SlotIdx = [int]([char]$matches[1]-[char]'A')*2 + [int]$matches[2] }
+    elseif ($Bank    -match 'BANK\s*(\d+)')           { $SlotIdx = [int]$matches[1] }
+    elseif ($Locator -match 'Slot\s*#?(\d+)')         { $SlotIdx = [int]$matches[1] - 1 }
+
+    if ($SlotIdx -lt 0 -or $SlotIdx -ge $TotalSlots) {
+        for ($j=0; $j -lt $TotalSlots; $j++) { if ($null -eq $SlotInfos[$j]) { $SlotIdx = $j; break } }
+    }
+    if ($SlotIdx -ge 0 -and $SlotIdx -lt $TotalSlots) {
+        $SlotInfos[$SlotIdx] = @{ Loc=$Locator; Info=$InfoStr }
+        $UsedSlots += $SlotIdx
+    }
 }
-for ($i=1; $i -le ($TotalSlots - $RamCount); $i++) { $RamList += "[Empty Slot] N/A" }
+
+$RamList = @()
+for ($i=0; $i -lt $TotalSlots; $i++) {
+    if ($SlotInfos[$i]) {
+        $RamList += "[Slot $($i+1): $($SlotInfos[$i].Loc)] $($SlotInfos[$i].Info)"
+    } else {
+        $RamList += "[Slot $($i+1): Empty]"
+    }
+}
 $RAMStr = $RamList -join " | "
 
 # Computer Description
@@ -709,23 +749,135 @@ $AllSW   = Get-ItemProperty $SwPaths -ErrorAction SilentlyContinue |
     Sort-Object DisplayName -Unique
 $CloudSW = ($AllSW | ForEach-Object { $_.DisplayName }) -join " | "
 
-# Users
-$AdminGrp = (Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue).Name
-$CloudUsers = (Get-LocalUser | Where-Object Enabled | ForEach-Object {
-    $Role = if ($AdminGrp -match $_.Name) { "Admin" } else { "User" }
-    "$($_.Name)($Role)"
-}) -join " | "
-
-# Printers
-$PrinterList = @()
-Get-Printer | ForEach-Object {
-    $PIP = ""
+# Users — Admin Check + Domain
+$AdminNames = @()
+try {
+    $AdminNames = (Get-LocalGroupMember -Group "Administrators" -ErrorAction Stop).Name |
+        ForEach-Object { $_.Split('\')[-1].ToLower() }
+} catch {
     try {
-        $PP = Get-PrinterPort -Name $_.PortName -ErrorAction Stop
-        if ($PP -and $PP.PrinterHostAddress) { $PIP = " (IP:$($PP.PrinterHostAddress))" }
+        $capture = $false
+        net localgroup Administrators 2>$null | ForEach-Object {
+            if ($_ -match '^----') { $capture = $true; return }
+            if ($_ -match '^The command completed') { $capture = $false; return }
+            if ($capture -and $_.Trim()) { $AdminNames += $_.Trim().Split('\')[-1].ToLower() }
+        }
     } catch {}
-    $PrinterList += "$($_.Name)$PIP"
 }
+
+# Domain ของเครื่อง
+$MachineDomain = try {
+    $csDomain = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop)
+    if ($csDomain.PartOfDomain) { $csDomain.Domain.Split('.')[0].ToUpper() } else { $csDomain.Workgroup }
+} catch { $env:USERDOMAIN }
+
+# Logged-on user + domain จาก Win32_LoggedOnUser
+$LogonMap = @{}
+try {
+    Get-CimInstance Win32_LoggedOnUser -ErrorAction SilentlyContinue | ForEach-Object {
+        $ant = $_.Antecedent.ToString()
+        if ($ant -match 'Domain="([^"]+)".*Name="([^"]+)"') {
+            $dom  = $matches[1]; $uname = $matches[2]; $uLow = $uname.ToLower()
+            $skip = @('system','local service','network service','dwm-1','umfd-0','umfd-1',
+                      'font driver host','window manager','defaultaccount','wdagutilityaccount','anonymous logon')
+            if ($uLow -notin $skip) { $LogonMap[$uLow] = "${dom}\${uname}" }
+        }
+    }
+} catch {}
+
+# สร้าง output
+$UserParts = @(); $Processed = @{}
+try {
+    Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $_.Enabled } | ForEach-Object {
+        $uName = $_.Name; $uLow = $uName.ToLower()
+        if ($Processed.ContainsKey($uLow)) { return }
+        if ($uLow -in @('defaultaccount','wdagutilityaccount')) { return }
+        $Processed[$uLow] = $true
+        $isAdmin = $AdminNames -contains $uLow
+        $role    = if ($isAdmin) { 'Admin' } else { 'User' }
+        $domUser = if ($LogonMap.ContainsKey($uLow)) { $LogonMap[$uLow] } else { "$MachineDomain\$uName" }
+        $UserParts += "$uName ($role) [$domUser]"
+    }
+} catch {}
+# เพิ่ม Domain users ที่ login อยู่แต่ไม่ใช่ local user
+foreach ($uLow in $LogonMap.Keys) {
+    if ($Processed.ContainsKey($uLow)) { continue }
+    $Processed[$uLow] = $true
+    $fullName  = $LogonMap[$uLow]; $shortName = $fullName.Split('\')[-1]
+    $isAdmin   = $AdminNames -contains $uLow
+    $role      = if ($isAdmin) { 'Admin' } else { 'User' }
+    $UserParts += "$shortName ($role) [$fullName]"
+}
+$CloudUsers = $UserParts -join " | "
+
+# Printers — Port + OPOS
+$PrinterList = @()
+try {
+    Get-Printer -ErrorAction SilentlyContinue | ForEach-Object {
+        $PName = $_.Name; $PPort = $_.PortName
+        # แปลง port ให้อ่านง่าย
+        $PortDisp = switch -Regex ($PPort) {
+            '^IP_(.+)'       { "IP:$($matches[1])" }
+            '^TCPMON:(.+)'   { "IP:$($matches[1])" }
+            '^WSD-'          { 'WSD' }
+            '^USB\d+'        { 'USB' }
+            '^LPT\d+'        { 'LPT' }
+            '^PORTPROMPT:'   { 'Virtual' }
+            '^nul:'          { 'NULL' }
+            '^FILE:'         { 'File' }
+            default {
+                # fallback: ลองหา IP จาก PrinterPort
+                $PIP = ""
+                try {
+                    $PP = Get-PrinterPort -Name $PPort -ErrorAction Stop
+                    if ($PP -and $PP.PrinterHostAddress) { $PIP = "IP:$($PP.PrinterHostAddress)" }
+                } catch {}
+                if ($PIP) { $PIP } else { $PPort }
+            }
+        }
+        $PrinterList += "$PName [$PortDisp]"
+    }
+} catch {
+    # Fallback WMI
+    try {
+        Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | ForEach-Object {
+            $PrinterList += "$($_.Name) [$($_.PortName)]"
+        }
+    } catch {}
+}
+
+# OPOS Devices — รวมใน AllPrinters
+$OposPaths = @(
+    'HKLM:\SOFTWARE\OLEforRetail\ServiceOPOS',
+    'HKLM:\SOFTWARE\WOW6432Node\OLEforRetail\ServiceOPOS'
+)
+$OposSeen = @{}
+foreach ($oBase in $OposPaths) {
+    if (-not (Test-Path $oBase)) { continue }
+    try {
+        Get-ChildItem $oBase -ErrorAction SilentlyContinue | ForEach-Object {
+            $oType = $_.PSChildName  # POSPrinter, CashDrawer
+            Get-ChildItem $_.PSPath -ErrorAction SilentlyContinue | ForEach-Object {
+                $oName = $_.PSChildName
+                $oKey  = "$oType`:$oName"
+                if (-not $OposSeen.ContainsKey($oKey)) {
+                    $OposSeen[$oKey] = $true
+                    $oLabel = switch ($oType) {
+                        'POSPrinter'  { 'OPOS' }
+                        'CashDrawer'  { 'OPOS:Drawer' }
+                        'LineDisplay' { 'OPOS:Display' }
+                        'Scanner'     { 'OPOS:Scanner' }
+                        'MSR'         { 'OPOS:MSR' }
+                        'Keylock'     { 'OPOS:Keylock' }
+                        default       { "OPOS:$oType" }
+                    }
+                    $PrinterList += "$oName [$oLabel]"
+                }
+            }
+        }
+    } catch {}
+}
+
 $CloudPrinters = $PrinterList -join " | "
 
 # Disk S.M.A.R.T
