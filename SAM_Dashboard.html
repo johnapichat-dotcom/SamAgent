@@ -1668,7 +1668,8 @@ function showDetail(r) {
     const rCls  = u.isUser
       ? 'background:var(--ok-bg);color:var(--ok2);border:1px solid rgba(16,185,129,.25)'
       : 'background:var(--warn-bg);color:var(--warn2);border:1px solid rgba(245,158,11,.25)';
-    admHTML += `<div class="admin-user-row"><div class="au-icon ${icCls}">${ico}</div><span class="au-name">${u.name}</span><span class="au-role" style="${rCls}">${u.role}</span></div>`;
+    const domBadge = u.domain ? `<span style="font-size:8px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-left:4px">${u.domain}</span>` : '';
+    admHTML += `<div class="admin-user-row"><div class="au-icon ${icCls}">${ico}</div><span class="au-name">${u.name}${domBadge}</span><span class="au-role" style="${rCls}">${u.role}</span></div>`;
   });
 
   document.getElementById('detailBody').innerHTML = `
@@ -1749,7 +1750,8 @@ async function openDevModal(i) {
     const rCls  = u.isUser
       ? 'background:var(--ok-bg);color:var(--ok2);border:1px solid rgba(16,185,129,.25)'
       : 'background:var(--warn-bg);color:var(--warn2);border:1px solid rgba(245,158,11,.25)';
-    admModalHTML += `<div class="admin-user-row"><div class="au-icon ${icCls}">${ico}</div><span class="au-name">${u.name}</span><span class="au-role" style="${rCls}">${u.role}</span></div>`;
+    const domBadge = u.domain ? `<span style="font-size:8px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-left:4px">${u.domain}</span>` : '';
+    admModalHTML += `<div class="admin-user-row"><div class="au-icon ${icCls}">${ico}</div><span class="au-name">${u.name}${domBadge}</span><span class="au-role" style="${rCls}">${u.role}</span></div>`;
   });
   admModalHTML += '</div>';
 
@@ -1778,7 +1780,11 @@ async function openDevModal(i) {
         ${fc('MAC',r.MACAddress||'—')}${fc('Monitor SN',r.MonitorSN||'—')}
         ${fc('Pending Reboot',r.PendingReboot||'—')}${fc('Stability Score',r.StabilityScore||'—')}
         ${admModalHTML}
-        ${pr.length?`<div class="field-card full"><div class="fc-key">Printers (${pr.length})</div><div class="tag-list">${pr.map(p=>`<span class="tag">${p}</span>`).join('')}</div></div>`:''}
+        ${pr.length?`<div class="field-card full"><div class="fc-key">Printers (${pr.length}) — <span style="color:var(--cyan)">🖨 ปกติ</span> <span style="color:var(--orange)">📟 OPOS</span></div><div class="tag-list">${pr.map(p=>{
+          const isOPOS = /\[OPOS/i.test(p);
+          const cls = isOPOS ? 'background:var(--orange-bg);border-color:rgba(251,146,60,.25);color:var(--orange)' : '';
+          return `<span class="tag" style="${cls}">${p}</span>`;
+        }).join('')}</div></div>`:''}
         ${sw.length?`<div class="field-card full"><div class="fc-key">Software (${sw.length}) — <span style="color:var(--purple)">🔵 VNC</span> <span style="color:var(--err2)">🔴 นอก whitelist</span></div><div class="tag-list">${swTags}</div></div>`:''}
       </div>
       <!-- C2 Section — render โดย Part 3 -->
@@ -2005,14 +2011,16 @@ function checkAdmin(r) {
   const parts=au.split('|').map(s=>s.trim()).filter(Boolean);
   const users=[]; let hasRestricted=false;
   parts.forEach(p => {
-    const m=p.match(/^(.+?)\s*\((Admin|Administrator|User)\)\s*$/i);
+    // Format ใหม่: "username (Admin) [DOMAIN\username]"
+    // Format เก่า: "username(Admin)" หรือ "username (Admin)"
+    const m = p.match(/^(.+?)\s*\((Admin|Administrator|User)\)(?:\s*\[([^\]]*)\])?\s*$/i);
     if (!m) return;
-    const name=m[1].trim(), role=m[2];
+    const name=m[1].trim(), role=m[2], domain=m[3]||'';
     const isGuest=name.toLowerCase()==='guest';
     const isSys=name.toLowerCase()==='administrator'||/_admin$/i.test(name)||/^admin$/i.test(name);
     const type=isGuest?'guest':isSys?'sys':'main';
     const isUser=role.toLowerCase()==='user';
-    users.push({name,role,type,isUser});
+    users.push({name,role,type,isUser,domain});
     if (type==='main'&&isUser) hasRestricted=true;
   });
   if (!users.length) return {status:'na',label:'—',users:[]};
