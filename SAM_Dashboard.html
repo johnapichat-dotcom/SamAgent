@@ -1787,8 +1787,18 @@ async function openDevModal(i) {
         }).join('')}</div></div>`:''}
         ${sw.length?`<div class="field-card full"><div class="fc-key">Software (${sw.length}) — <span style="color:var(--purple)">🔵 VNC</span> <span style="color:var(--err2)">🔴 นอก whitelist</span></div><div class="tag-list">${swTags}</div></div>`:''}
       </div>
-      <!-- C2 Section — render โดย Part 3 -->
+      <!-- C2 Section -->
       <div id="c2Section"></div>
+      ${hasRole('it_manager') ? `
+      <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+        <button class="btn btn-danger" style="width:100%;justify-content:center;padding:8px"
+          onclick="deleteDevice('${(r.SerialNumber||'').replace(/'/g,"\\'")}','${(r.ComputerName||'').replace(/'/g,"\\'")}','${(r.BranchID||'').replace(/'/g,"\\'")}')">
+          🗑 ลบอุปกรณ์นี้ออกจากระบบ
+        </button>
+        <div style="font-size:9px;color:var(--text3);text-align:center;margin-top:4px">
+          ลบข้อมูลจาก Supabase · ถ้า Agent ยังทำงานอยู่จะ sync กลับมาใหม่
+        </div>
+      </div>` : ''}
     </div>`;
 
   // render C2 section (Part 3 จะ implement)
@@ -2882,6 +2892,57 @@ async function deleteUser(email) {
       await renderUserMgmtBody();
     }
   );
+}
+
+// ============================================================
+// DELETE DEVICE
+// ============================================================
+async function deleteDevice(serial, pcName, branch) {
+  if (!hasRole('it_manager')) { showToast('⛔ ไม่มีสิทธิ์ลบอุปกรณ์','err'); return; }
+
+  showConfirm(
+    '🗑 ลบอุปกรณ์ออกจากระบบ',
+    `ลบ "${pcName}" (${branch})\nSerial: ${serial}\n\n⚠ ข้อมูลทั้งหมดของเครื่องนี้จะถูกลบ\nถ้า Agent ยังทำงานอยู่ จะ sync ข้อมูลกลับมาใหม่ในรอบถัดไป`,
+    () => doDeleteDevice(serial, pcName)
+  );
+}
+
+async function doDeleteDevice(serial, pcName) {
+  try {
+    // ลบ C2 commands ที่เกี่ยวข้อง (pending)
+    await sb.from('sam_c2_commands')
+      .delete()
+      .eq('serial_number', serial)
+      .eq('computer_name', pcName)
+      .eq('status', 'pending');
+
+    // ลบ device
+    const { error } = await sb.from('sam_devices')
+      .delete()
+      .eq('SerialNumber', serial)
+      .eq('ComputerName', pcName);
+
+    if (error) throw error;
+
+    // อัปเดต local data
+    ALL = ALL.filter(d => !(d.SerialNumber === serial && d.ComputerName === pcName));
+    FILTERED = FILTERED.filter(d => !(d.SerialNumber === serial && d.ComputerName === pcName));
+
+    showToast(`✅ ลบ "${pcName}" สำเร็จ`, 'ok');
+    closeOverlay('deviceOverlay');
+
+    // Re-render
+    renderTable();
+    const rc = document.getElementById('rowCount');
+    if (rc) rc.textContent = FILTERED.length + ' รายการ';
+
+    // Reset detail panel
+    document.getElementById('detailEmpty').style.display = '';
+    document.getElementById('detailBody').style.display = 'none';
+
+  } catch(e) {
+    showToast('❌ ลบไม่สำเร็จ: ' + e.message, 'err');
+  }
 }
 
 // ============================================================
