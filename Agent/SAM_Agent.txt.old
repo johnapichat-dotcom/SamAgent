@@ -28,7 +28,7 @@ $TaskBaseUrl   = "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/
 
 # Supabase
 $SupabaseUrl   = "https://xabvhfoosmqyrbkohmof.supabase.co/rest/v1/sam_devices?on_conflict=SerialNumber"
-$RawKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhhYnZoZm9vc21xeXJia29obW9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3NDg2NDAsImV4cCI6MjA5MzMyNDY0MH0.12i8J50IPfEkTcq7xFJz54rA4MLARcHOsTtibi1iG2s"
+$RawKey        = "-------------------------------------------------------------------------------------------------------------"
 $SupabaseKey   = $RawKey -replace '\s+', ''
 
 # Full Sync interval (วัน) — ถ้าครบจะส่ง Full แม้ไม่มีการเปลี่ยนแปลง
