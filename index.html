@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>S.A.M. Web Provisioning Portal v3.1.0</title>
+    <title>S.A.M. Web Provisioning Portal v3.3.0</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         :root {
@@ -20,13 +20,7 @@
             --c-muted:    #64748b;
         }
         * { box-sizing: border-box; }
-        html, body {
-            width: 100%;
-            height: 100%;
-            margin: 0;
-            padding: 0;
-            overflow-x: hidden;
-        }
+        html, body { width:100%; height:100%; margin:0; padding:0; overflow-x:hidden; }
         body {
             background-color: var(--c-bg);
             color: var(--c-text);
@@ -35,26 +29,17 @@
             position: relative;
         }
 
-        /* ===== Video Background ===== */
+        /* Video Background */
         #videoBg {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            z-index: 0;
-            filter: brightness(var(--video-brightness, 0.6)) 
-                    contrast(var(--video-contrast, 1.1));
+            position: fixed; top:0; left:0; width:100%; height:100%;
+            object-fit: cover; z-index:0;
+            filter: brightness(var(--video-brightness, 0.6)) contrast(var(--video-contrast, 1.1));
             opacity: var(--video-opacity, 0.4);
         }
 
         /* Grid overlay */
         body::before {
-            content: '';
-            position: fixed;
-            inset: 0;
-            z-index: 1;
+            content:''; position:fixed; inset:0; z-index:1;
             background-image:
                 linear-gradient(rgba(0,229,255,.03) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(0,229,255,.03) 1px, transparent 1px);
@@ -62,276 +47,227 @@
             pointer-events: none;
         }
 
-        /* Content wrapper */
         .main-wrap {
-            position: relative;
-            z-index: 2;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 2rem 1rem 4rem;
-            gap: 1.5rem;
+            position:relative; z-index:2;
+            display:flex; flex-direction:column; align-items:center;
+            padding:2rem 1rem 4rem; gap:1.5rem;
         }
 
-        /* ===== Controls Panel ===== */
+        /* Controls Panel */
         .controls-panel {
-            position: fixed;
-            top: 1rem;
-            left: 1rem;
-            z-index: 10;
-            background: rgba(22, 22, 22, 0.95);
-            border: 1px solid rgba(0, 229, 255, 0.3);
-            border-radius: 10px;
-            padding: 1rem;
-            min-width: 260px;
-            backdrop-filter: blur(8px);
-            box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
+            position:fixed; top:1rem; left:1rem; z-index:10;
+            background:rgba(22,22,22,0.95); border:1px solid rgba(0,229,255,.3);
+            border-radius:10px; padding:1rem; min-width:260px;
+            backdrop-filter:blur(8px); box-shadow:0 0 20px rgba(0,0,0,.6);
         }
-        .controls-panel.hidden { display: none; }
+        .controls-panel.hidden { display:none; }
         .ctrl-title {
-            font-size: 0.7rem;
-            font-weight: 700;
-            letter-spacing: 0.15em;
-            color: var(--c-accent);
-            text-transform: uppercase;
-            margin-bottom: 0.8rem;
-            display: flex;
-            align-items: center;
-            gap: 0.4rem;
+            font-size:.7rem; font-weight:700; letter-spacing:.15em;
+            color:var(--c-accent); text-transform:uppercase;
+            margin-bottom:.8rem; display:flex; align-items:center; gap:.4rem;
         }
-        .ctrl-item {
-            margin-bottom: 0.9rem;
-        }
+        .ctrl-item { margin-bottom:.9rem; }
         .ctrl-label {
-            font-size: 0.7rem;
-            color: #94a3b8;
-            font-weight: 600;
-            margin-bottom: 0.3rem;
-            display: flex;
-            justify-content: space-between;
+            font-size:.7rem; color:#94a3b8; font-weight:600;
+            margin-bottom:.3rem; display:flex; justify-content:space-between;
         }
-        .ctrl-value {
-            color: var(--c-accent);
-            font-weight: 700;
-            font-size: 0.7rem;
-        }
+        .ctrl-value { color:var(--c-accent); font-weight:700; font-size:.7rem; }
         input[type="range"] {
-            width: 100%;
-            height: 5px;
-            border-radius: 3px;
-            background: #2d2d2d;
-            outline: none;
-            -webkit-appearance: none;
-            cursor: pointer;
+            width:100%; height:5px; border-radius:3px; background:#2d2d2d;
+            outline:none; -webkit-appearance:none; cursor:pointer;
         }
         input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            background: var(--c-accent);
-            cursor: pointer;
-            box-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
+            -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
+            background:var(--c-accent); cursor:pointer; box-shadow:0 0 8px rgba(0,229,255,.6);
         }
         input[type="range"]::-moz-range-thumb {
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            background: var(--c-accent);
-            border: none;
-            cursor: pointer;
-            box-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
+            width:14px; height:14px; border-radius:50%;
+            background:var(--c-accent); border:none; cursor:pointer;
+            box-shadow:0 0 8px rgba(0,229,255,.6);
         }
-
-        .color-picker-group {
-            display: flex;
-            gap: 0.4rem;
-            flex-wrap: wrap;
-        }
+        .color-picker-group { display:flex; gap:.4rem; flex-wrap:wrap; }
         .color-swatch {
-            width: 32px;
-            height: 32px;
-            border-radius: 6px;
-            border: 2px solid transparent;
-            cursor: pointer;
-            transition: all 0.2s;
+            width:32px; height:32px; border-radius:6px;
+            border:2px solid transparent; cursor:pointer; transition:all .2s;
         }
-        .color-swatch:hover { transform: scale(1.1); }
-        .color-swatch.active {
-            border-color: var(--c-text);
-            box-shadow: 0 0 12px rgba(0, 229, 255, 0.5);
-        }
-
+        .color-swatch:hover { transform:scale(1.1); }
+        .color-swatch.active { border-color:var(--c-text); box-shadow:0 0 12px rgba(0,229,255,.5); }
         .btn-toggle {
-            width: 100%;
-            background: var(--c-panel2);
-            border: 1px solid #333;
-            color: var(--c-text);
-            padding: 0.5rem 0.7rem;
-            border-radius: 6px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
+            width:100%; background:var(--c-panel2); border:1px solid #333;
+            color:var(--c-text); padding:.5rem .7rem; border-radius:6px;
+            font-size:.75rem; font-weight:600; cursor:pointer; transition:all .2s;
         }
-        .btn-toggle:hover {
-            border-color: var(--c-accent);
-            color: var(--c-accent);
-        }
-        .btn-toggle.active {
-            background: rgba(0, 229, 255, 0.15);
-            border-color: var(--c-accent);
-            color: var(--c-accent);
-        }
+        .btn-toggle:hover { border-color:var(--c-accent); color:var(--c-accent); }
 
         /* Header */
-        .sam-header { text-align: center; width: 100%; max-width: 580px; }
+        .sam-header { text-align:center; width:100%; max-width:580px; }
         .sam-title {
-            font-size: 1.6rem; font-weight: 800; letter-spacing: .15em;
-            color: var(--c-accent); text-transform: uppercase;
-            text-shadow: 0 0 18px rgba(0,229,255,.4);
-            display: flex; align-items: center; justify-content: center; gap: .5rem;
+            font-size:1.6rem; font-weight:800; letter-spacing:.15em;
+            color:var(--c-accent); text-transform:uppercase;
+            text-shadow:0 0 18px rgba(0,229,255,.4);
+            display:flex; align-items:center; justify-content:center; gap:.5rem;
         }
-        .sam-sub { font-size: .75rem; color: var(--c-muted); letter-spacing: .1em; margin-top: .3rem; }
+        .sam-sub { font-size:.75rem; color:var(--c-muted); letter-spacing:.1em; margin-top:.3rem; }
         .ver-badge {
-            display: inline-flex; align-items: center; gap: .4rem;
-            background: rgba(0,229,255,.08); border: 1px solid rgba(0,229,255,.25);
-            color: var(--c-accent); font-size: .68rem; font-weight: 700;
-            letter-spacing: .1em; padding: .25rem .7rem; border-radius: 999px; margin-top: .6rem;
+            display:inline-flex; align-items:center; gap:.4rem;
+            background:rgba(0,229,255,.08); border:1px solid rgba(0,229,255,.25);
+            color:var(--c-accent); font-size:.68rem; font-weight:700;
+            letter-spacing:.1em; padding:.25rem .7rem; border-radius:999px; margin-top:.6rem;
         }
-        .ver-dot { width:7px; height:7px; border-radius:50%; background:var(--c-ok); animation: pulse 2s infinite; }
+        .ver-dot { width:7px; height:7px; border-radius:50%; background:var(--c-ok); animation:pulse 2s infinite; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 
         /* Card */
         .card {
-            width: 100%; max-width: 580px;
-            background: rgba(22, 22, 22, 0.92); 
-            border: 1px solid rgba(0,229,255,.18);
-            border-radius: 12px; 
-            padding: 1.5rem;
-            box-shadow: 0 0 30px rgba(0,229,255,.1), 0 0 60px rgba(0,0,0,.6);
-            backdrop-filter: blur(6px);
+            width:100%; max-width:580px;
+            background:rgba(22,22,22,0.92); border:1px solid rgba(0,229,255,.18);
+            border-radius:12px; padding:1.5rem;
+            box-shadow:0 0 30px rgba(0,229,255,.1),0 0 60px rgba(0,0,0,.6);
+            backdrop-filter:blur(6px);
         }
         .sec-label {
-            font-size: .7rem; font-weight: 700; letter-spacing: .12em;
-            color: var(--c-muted); text-transform: uppercase;
-            margin-bottom: .9rem; display: flex; align-items: center; gap: .5rem;
+            font-size:.7rem; font-weight:700; letter-spacing:.12em;
+            color:var(--c-muted); text-transform:uppercase;
+            margin-bottom:.9rem; display:flex; align-items:center; gap:.5rem;
         }
-        .sec-label::after { content: ''; flex: 1; height: 1px; background: rgba(255,255,255,.07); }
+        .sec-label::after { content:''; flex:1; height:1px; background:rgba(255,255,255,.07); }
 
-        label.field-label { display: block; font-size: .78rem; font-weight: 600; color: #94a3b8; margin-bottom: .4rem; }
-        .field-row { margin-bottom: 1.1rem; }
+        label.field-label { display:block; font-size:.78rem; font-weight:600; color:#94a3b8; margin-bottom:.4rem; }
+        .field-row { margin-bottom:1.1rem; }
         select, input[type="text"] {
-            width: 100%; background: var(--c-panel2); border: 1px solid #2d2d2d;
-            border-radius: 7px; padding: .6rem .85rem; color: var(--c-text);
-            font-size: .88rem; appearance: none; -webkit-appearance: none;
-            transition: border-color .2s, box-shadow .2s; outline: none;
+            width:100%; background:var(--c-panel2); border:1px solid #2d2d2d;
+            border-radius:7px; padding:.6rem .85rem; color:var(--c-text);
+            font-size:.88rem; appearance:none; -webkit-appearance:none;
+            transition:border-color .2s,box-shadow .2s; outline:none;
         }
         select:focus, input[type="text"]:focus {
-            border-color: var(--c-accent); box-shadow: 0 0 0 3px rgba(0,229,255,.1);
+            border-color:var(--c-accent); box-shadow:0 0 0 3px rgba(0,229,255,.1);
         }
-        select option { background: #1e1e1e; }
-
-        .pair-row { display: grid; grid-template-columns: 1fr auto; gap: .5rem; }
-        .pair-row select { width: 120px; }
+        select option { background:#1e1e1e; }
+        .pair-row { display:grid; grid-template-columns:1fr auto; gap:.5rem; }
+        .pair-row select { width:120px; }
 
         .btn-generate {
-            width: 100%; background: linear-gradient(135deg, #00e5ff, #0072ff);
-            color: #000; font-weight: 800; font-size: .85rem; letter-spacing: .12em;
-            text-transform: uppercase; padding: .85rem; border-radius: 8px; border: none;
-            cursor: pointer; transition: all .25s;
-            display: flex; align-items: center; justify-content: center; gap: .5rem;
-            box-shadow: 0 0 20px rgba(0,229,255,.25);
+            width:100%; background:linear-gradient(135deg,#00e5ff,#0072ff);
+            color:#000; font-weight:800; font-size:.85rem; letter-spacing:.12em;
+            text-transform:uppercase; padding:.85rem; border-radius:8px; border:none;
+            cursor:pointer; transition:all .25s;
+            display:flex; align-items:center; justify-content:center; gap:.5rem;
+            box-shadow:0 0 20px rgba(0,229,255,.25);
         }
-        .btn-generate:hover { box-shadow: 0 0 35px rgba(0,229,255,.45); transform: translateY(-1px); }
-        .btn-generate:active { transform: translateY(0); }
+        .btn-generate:hover { box-shadow:0 0 35px rgba(0,229,255,.45); transform:translateY(-1px); }
+        .btn-generate:active { transform:translateY(0); }
 
         /* Result */
         .result-card {
-            width: 100%; max-width: 580px; 
-            background: rgba(22, 22, 22, 0.92);
-            border: 1px solid rgba(0,229,255,.2); 
-            border-radius: 12px; 
-            padding: 1.4rem;
-            box-shadow: 0 0 25px rgba(0,229,255,.08), 0 0 50px rgba(0,0,0,.6); 
-            display: none;
-            backdrop-filter: blur(6px);
+            width:100%; max-width:580px;
+            background:rgba(22,22,22,0.92); border:1px solid rgba(0,229,255,.2);
+            border-radius:12px; padding:1.4rem;
+            box-shadow:0 0 25px rgba(0,229,255,.08),0 0 50px rgba(0,0,0,.6);
+            display:none; backdrop-filter:blur(6px);
         }
-        .result-card.visible { display: block; animation: slideUp .3s ease; }
+        .result-card.visible { display:block; animation:slideUp .3s ease; }
         @keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
 
         .result-label {
-            font-size: .7rem; font-weight: 700; letter-spacing: .1em;
-            color: var(--c-accent); text-transform: uppercase;
-            margin-bottom: .6rem; display: flex; align-items: center; gap: .4rem;
+            font-size:.7rem; font-weight:700; letter-spacing:.1em;
+            color:var(--c-accent); text-transform:uppercase;
+            margin-bottom:.6rem; display:flex; align-items:center; gap:.4rem;
         }
-
-        .step-pills { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .8rem; }
+        .step-pills { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.8rem; }
         .step-pill {
-            font-size: .68rem; padding: .2rem .6rem; border-radius: 999px;
-            background: rgba(0,229,255,.08); border: 1px solid rgba(0,229,255,.2);
-            color: var(--c-accent); font-weight: 600;
+            font-size:.68rem; padding:.2rem .6rem; border-radius:999px;
+            background:rgba(0,229,255,.08); border:1px solid rgba(0,229,255,.2);
+            color:var(--c-accent); font-weight:600;
         }
 
         .cmd-box {
-            background: #080808; border: 1px solid #1e1e1e; border-radius: 8px;
-            padding: 1rem 1.1rem;
-            font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
-            font-size: .72rem; color: #4ade80; word-break: break-all;
-            white-space: pre-wrap; line-height: 1.6; max-height: 280px; overflow-y: auto;
+            background:#080808; border:1px solid #1e1e1e; border-radius:8px;
+            padding:1rem 1.1rem;
+            font-family:'Cascadia Code','Consolas','Courier New',monospace;
+            font-size:.72rem; color:#4ade80; word-break:break-all;
+            white-space:pre-wrap; line-height:1.6; max-height:280px; overflow-y:auto;
         }
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: #111; }
-        ::-webkit-scrollbar-thumb { background: rgba(0,229,255,.3); border-radius: 4px; }
+        ::-webkit-scrollbar { width:6px; height:6px; }
+        ::-webkit-scrollbar-track { background:#111; }
+        ::-webkit-scrollbar-thumb { background:rgba(0,229,255,.3); border-radius:4px; }
 
         .deploy-note {
-            font-size: .72rem; color: var(--c-warn);
-            background: rgba(245,158,11,.06); border: 1px solid rgba(245,158,11,.2);
-            border-radius: 6px; padding: .5rem .75rem; margin-bottom: .85rem;
-            display: flex; align-items: flex-start; gap: .4rem;
+            font-size:.72rem; color:var(--c-warn);
+            background:rgba(245,158,11,.06); border:1px solid rgba(245,158,11,.2);
+            border-radius:6px; padding:.5rem .75rem; margin-bottom:.85rem;
+            display:flex; align-items:flex-start; gap:.4rem;
         }
+
+        /* ✅ NEW: Verify Panel */
+        .verify-panel {
+            margin-top:1rem;
+            background:rgba(0,229,255,.04); border:1px solid rgba(0,229,255,.15);
+            border-radius:8px; padding:1rem;
+        }
+        .verify-title {
+            font-size:.7rem; font-weight:700; letter-spacing:.1em;
+            color:var(--c-muted); text-transform:uppercase; margin-bottom:.7rem;
+            display:flex; align-items:center; gap:.4rem;
+        }
+        .verify-row {
+            display:flex; align-items:center; gap:.6rem;
+            padding:.35rem 0; border-bottom:1px solid rgba(255,255,255,.04);
+            font-size:.75rem;
+        }
+        .verify-row:last-child { border-bottom:none; }
+        .verify-icon { font-size:.9rem; flex-shrink:0; width:1.2rem; text-align:center; }
+        .verify-name { color:#94a3b8; flex:1; font-family:'Cascadia Code','Consolas',monospace; }
+        .verify-status {
+            font-size:.68rem; font-weight:700; padding:.15rem .5rem;
+            border-radius:999px; flex-shrink:0;
+        }
+        .vs-ok   { background:rgba(34,197,94,.15); color:var(--c-ok); border:1px solid rgba(34,197,94,.3); }
+        .vs-wait { background:rgba(245,158,11,.1); color:var(--c-warn); border:1px solid rgba(245,158,11,.2); }
+        .vs-err  { background:rgba(239,68,68,.1); color:var(--c-error); border:1px solid rgba(239,68,68,.2); }
+        .vs-checking { background:rgba(0,229,255,.1); color:var(--c-accent); border:1px solid rgba(0,229,255,.2); }
+
+        .btn-verify {
+            width:100%; margin-top:.9rem;
+            background:rgba(0,229,255,.08); border:1px solid rgba(0,229,255,.2);
+            color:var(--c-accent); font-size:.78rem; font-weight:600;
+            padding:.6rem; border-radius:7px; cursor:pointer;
+            display:flex; align-items:center; justify-content:center; gap:.4rem;
+            transition:all .2s;
+        }
+        .btn-verify:hover { background:rgba(0,229,255,.15); border-color:rgba(0,229,255,.4); }
+        .btn-verify:disabled { opacity:.4; cursor:not-allowed; }
 
         .btn-copy {
-            width: 100%; margin-top: .85rem; background: var(--c-panel2);
-            border: 1px solid #333; color: var(--c-text); font-size: .82rem;
-            font-weight: 600; padding: .65rem; border-radius: 7px; cursor: pointer;
-            display: flex; align-items: center; justify-content: center; gap: .45rem;
-            transition: all .2s;
+            width:100%; margin-top:.85rem; background:var(--c-panel2);
+            border:1px solid #333; color:var(--c-text); font-size:.82rem;
+            font-weight:600; padding:.65rem; border-radius:7px; cursor:pointer;
+            display:flex; align-items:center; justify-content:center; gap:.45rem;
+            transition:all .2s;
         }
-        .btn-copy:hover { border-color: var(--c-accent); color: var(--c-accent); }
-        .btn-copy.copied { background: rgba(34,197,94,.12); border-color: var(--c-ok); color: var(--c-ok); }
+        .btn-copy:hover { border-color:var(--c-accent); color:var(--c-accent); }
+        .btn-copy.copied { background:rgba(34,197,94,.12); border-color:var(--c-ok); color:var(--c-ok); }
 
         #toast {
-            position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--c-ok);
-            color: #fff; padding: .75rem 1.2rem; border-radius: 8px;
-            font-size: .82rem; font-weight: 600;
-            display: flex; align-items: center; gap: .5rem;
-            box-shadow: 0 4px 20px rgba(0,0,0,.4); z-index: 100;
-            transform: translateY(80px); opacity: 0;
-            transition: all .3s cubic-bezier(.34,1.56,.64,1); pointer-events: none;
+            position:fixed; bottom:1.5rem; right:1.5rem; background:var(--c-ok);
+            color:#fff; padding:.75rem 1.2rem; border-radius:8px;
+            font-size:.82rem; font-weight:600;
+            display:flex; align-items:center; gap:.5rem;
+            box-shadow:0 4px 20px rgba(0,0,0,.4); z-index:100;
+            transform:translateY(80px); opacity:0;
+            transition:all .3s cubic-bezier(.34,1.56,.64,1); pointer-events:none;
         }
-        #toast.show { transform: translateY(0); opacity: 1; }
+        #toast.show { transform:translateY(0); opacity:1; }
 
-        .footer { font-size: .67rem; color: #2d2d2d; text-align: center; letter-spacing: .08em; }
-
+        .footer { font-size:.67rem; color:#2d2d2d; text-align:center; letter-spacing:.08em; }
         @keyframes shake {
             0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-6px)} 40%,80%{transform:translateX(6px)}
         }
-        .shake { animation: shake .35s ease; border-color: var(--c-error) !important; }
+        .shake { animation:shake .35s ease; border-color:var(--c-error) !important; }
 
-        /* Mobile responsive */
-        @media (max-width: 768px) {
-            .controls-panel {
-                top: auto;
-                bottom: 1rem;
-                left: 1rem;
-                right: 1rem;
-                min-width: unset;
-                width: calc(100% - 2rem);
-            }
-            .main-wrap {
-                padding-top: 1.5rem;
-            }
+        @media (max-width:768px) {
+            .controls-panel { top:auto; bottom:1rem; left:1rem; right:1rem; min-width:unset; width:calc(100% - 2rem); }
+            .main-wrap { padding-top:1.5rem; }
         }
     </style>
 </head>
@@ -348,43 +284,29 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><path d="M12 1v6m0 6v6"/><path d="M4.22 4.22l4.24 4.24m2.12 2.12l4.24 4.24"/><path d="M1 12h6m6 0h6"/><path d="M4.22 19.78l4.24-4.24m2.12-2.12l4.24-4.24"/><path d="M19.78 19.78l-4.24-4.24m-2.12-2.12l-4.24-4.24"/></svg>
         Background
     </div>
-
     <div class="ctrl-item">
-        <div class="ctrl-label">
-            <span>Brightness</span>
-            <span class="ctrl-value" id="brightValue">60%</span>
-        </div>
+        <div class="ctrl-label"><span>Brightness</span><span class="ctrl-value" id="brightValue">60%</span></div>
         <input type="range" id="brightness" min="0" max="150" value="60">
     </div>
-
     <div class="ctrl-item">
-        <div class="ctrl-label">
-            <span>Contrast</span>
-            <span class="ctrl-value" id="contrastValue">110%</span>
-        </div>
+        <div class="ctrl-label"><span>Contrast</span><span class="ctrl-value" id="contrastValue">110%</span></div>
         <input type="range" id="contrast" min="50" max="200" value="110">
     </div>
-
     <div class="ctrl-item">
-        <div class="ctrl-label">
-            <span>Opacity</span>
-            <span class="ctrl-value" id="opacityValue">40%</span>
-        </div>
+        <div class="ctrl-label"><span>Opacity</span><span class="ctrl-value" id="opacityValue">40%</span></div>
         <input type="range" id="opacity" min="0" max="100" value="40">
     </div>
-
-    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(0,229,255,.15);">
-        <div class="ctrl-label" style="margin-bottom: 0.6rem;">Theme Color</div>
+    <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid rgba(0,229,255,.15);">
+        <div class="ctrl-label" style="margin-bottom:.6rem;">Theme Color</div>
         <div class="color-picker-group">
-            <div class="color-swatch active" style="background: #00e5ff;" onclick="switchTheme('#00e5ff', '#0072ff')"></div>
-            <div class="color-swatch" style="background: #00ff00;" onclick="switchTheme('#00ff00', '#00aa00')"></div>
-            <div class="color-swatch" style="background: #ff00ff;" onclick="switchTheme('#ff00ff', '#aa00ff')"></div>
-            <div class="color-swatch" style="background: #ffaa00;" onclick="switchTheme('#ffaa00', '#ff7700')"></div>
-            <div class="color-swatch" style="background: #0099ff;" onclick="switchTheme('#0099ff', '#0066cc')"></div>
+            <div class="color-swatch active" style="background:#00e5ff;" onclick="switchTheme('#00e5ff','#0072ff')"></div>
+            <div class="color-swatch" style="background:#00ff00;" onclick="switchTheme('#00ff00','#00aa00')"></div>
+            <div class="color-swatch" style="background:#ff00ff;" onclick="switchTheme('#ff00ff','#aa00ff')"></div>
+            <div class="color-swatch" style="background:#ffaa00;" onclick="switchTheme('#ffaa00','#ff7700')"></div>
+            <div class="color-swatch" style="background:#0099ff;" onclick="switchTheme('#0099ff','#0066cc')"></div>
         </div>
     </div>
-
-    <button class="btn-toggle" style="margin-top: 1rem;" onclick="toggleControls()">Hide ▲</button>
+    <button class="btn-toggle" style="margin-top:1rem;" onclick="toggleControls()">Hide ▲</button>
 </div>
 
 <div class="main-wrap">
@@ -396,7 +318,7 @@
             S.A.M. Provisioning
         </div>
         <div class="sam-sub">Zero-Touch Deployment Center</div>
-        <div class="ver-badge"><span class="ver-dot"></span>v3.1.0 &nbsp;·&nbsp; Enterprise Edition</div>
+        <div class="ver-badge"><span class="ver-dot"></span>v3.3.0 &nbsp;·&nbsp; Enterprise Edition</div>
     </div>
 
     <!-- Main Card -->
@@ -412,7 +334,7 @@
                 <option>PunthaiFC</option><option>MaxMart</option><option>ATL</option>
                 <option>Oil depot</option><option>AutoBacs</option><option>Subway</option>
                 <option>CoffeeWorld</option><option>Office</option><option>HQ</option>
-                <option>LPG plant</option><option>Other</select>
+                <option>LPG plant</option><option>Other</option>
             </select>
         </div>
 
@@ -491,11 +413,56 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
             Copy to Clipboard
         </button>
+
+        <!-- ✅ NEW: Verify Panel -->
+        <div class="verify-panel" id="verifyPanel">
+            <div class="verify-title">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                ตรวจสอบไฟล์บน GitHub (ก่อน Deploy)
+            </div>
+
+            <!-- File list -->
+            <div class="verify-row">
+                <span class="verify-icon">📋</span>
+                <span class="verify-name">SAM_Agent.txt</span>
+                <span class="verify-status vs-wait" id="vs-agent">รอตรวจสอบ</span>
+            </div>
+            <div class="verify-row">
+                <span class="verify-icon">⏰</span>
+                <span class="verify-name">SAM_Scheduler.txt</span>
+                <span class="verify-status vs-wait" id="vs-scheduler">รอตรวจสอบ</span>
+            </div>
+            <div class="verify-row">
+                <span class="verify-icon">🔄</span>
+                <span class="verify-name">SAM_Update.txt</span>
+                <span class="verify-status vs-wait" id="vs-update">รอตรวจสอบ</span>
+            </div>
+            <div class="verify-row">
+                <span class="verify-icon">🔢</span>
+                <span class="verify-name">version.txt</span>
+                <span class="verify-status vs-wait" id="vs-version">รอตรวจสอบ</span>
+            </div>
+            <div class="verify-row">
+                <span class="verify-icon">💾</span>
+                <span class="verify-name">smartctl.exe (Release)</span>
+                <span class="verify-status vs-wait" id="vs-smartctl">รอตรวจสอบ</span>
+            </div>
+            <div class="verify-row">
+                <span class="verify-icon">🔑</span>
+                <span class="verify-name">SpbKey.txt (จะสร้างบนเครื่อง)</span>
+                <span class="verify-status vs-ok" id="vs-spbkey">✅ Embedded ใน Command</span>
+            </div>
+
+            <button class="btn-verify" id="btnVerify" onclick="verifyFiles()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                ตรวจสอบไฟล์บน GitHub
+            </button>
+        </div>
     </div>
 
     <!-- Footer -->
     <div class="footer">
-        <div>S.A.M. Web Provisioning Portal · v3.1.0 Enterprise</div>
+        <div>S.A.M. Web Provisioning Portal · v3.3.0 Enterprise</div>
         <div style="margin-top:.2rem">DEVELOPER: Aphichat IT Support</div>
     </div>
 
@@ -508,49 +475,51 @@
 </div>
 
 <script>
+'use strict';
+
 // ============================================================
-// GitHub URLs — v3.1.0
+// CONFIG v3.3.0
 // ============================================================
+const VERSION = '3.3.0';
+
+// Supabase Anon Key — embed ใน command เพื่อสร้าง SpbKey.txt บนเครื่องปลายทาง
+// Agent v3.3.0 ไม่มี Key ในตัว → อ่านจาก SpbKey.txt เท่านั้น
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhhYnZoZm9vc21xeXJia29obW9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3NDg2NDAsImV4cCI6MjA5MzMyNDY0MH0.12i8J50IPfEkTcq7xFJz54rA4MLARcHOsTtibi1iG2s';
+
+// GitHub URLs
+const RAW_BASE   = 'https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent';
 const URLS = {
-    scheduler : "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent/SAM_Scheduler.txt",
-    agent     : "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent/SAM_Agent.txt",
-    update    : "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent/SAM_Update.txt",
-    smartctl  : "https://github.com/johnapichat-dotcom/SamAgent/releases/download/UpdateSAM/smartctl.exe"
+    scheduler : RAW_BASE + '/SAM_Scheduler.txt',
+    agent     : RAW_BASE + '/SAM_Agent.txt',
+    update    : RAW_BASE + '/SAM_Update.txt',
+    version   : RAW_BASE + '/version.txt',
+    smartctl  : 'https://github.com/johnapichat-dotcom/SamAgent/releases/download/UpdateSAM/smartctl.exe'
 };
 
 // ============================================================
 // Video Controls
 // ============================================================
 document.getElementById('brightness').addEventListener('input', function(e) {
-    const val = e.target.value;
-    document.documentElement.style.setProperty('--video-brightness', val / 100);
-    document.getElementById('brightValue').textContent = val + '%';
+    document.documentElement.style.setProperty('--video-brightness', e.target.value / 100);
+    document.getElementById('brightValue').textContent = e.target.value + '%';
 });
-
 document.getElementById('contrast').addEventListener('input', function(e) {
-    const val = e.target.value;
-    document.documentElement.style.setProperty('--video-contrast', val / 100);
-    document.getElementById('contrastValue').textContent = val + '%';
+    document.documentElement.style.setProperty('--video-contrast', e.target.value / 100);
+    document.getElementById('contrastValue').textContent = e.target.value + '%';
 });
-
 document.getElementById('opacity').addEventListener('input', function(e) {
-    const val = e.target.value;
-    document.documentElement.style.setProperty('--video-opacity', val / 100);
-    document.getElementById('opacityValue').textContent = val + '%';
+    document.documentElement.style.setProperty('--video-opacity', e.target.value / 100);
+    document.getElementById('opacityValue').textContent = e.target.value + '%';
 });
 
 function toggleControls() {
     const panel = document.querySelector('.controls-panel');
-    const btn = event.target;
     panel.classList.toggle('hidden');
-    btn.textContent = panel.classList.contains('hidden') ? 'Show ▼' : 'Hide ▲';
+    event.target.textContent = panel.classList.contains('hidden') ? 'Show ▼' : 'Hide ▲';
 }
-
 function switchTheme(accent, accent2) {
     document.documentElement.style.setProperty('--c-accent', accent);
     document.documentElement.style.setProperty('--c-accent2', accent2);
-    
-    // Update color swatches
     document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
     event.target.classList.add('active');
 }
@@ -565,7 +534,7 @@ function validate() {
         const el = document.getElementById(id);
         if (!el.value.trim()) {
             el.classList.add('shake');
-            el.addEventListener('animationend', () => el.classList.remove('shake'), { once: true });
+            el.addEventListener('animationend', () => el.classList.remove('shake'), { once:true });
             ok = false;
         }
     });
@@ -573,7 +542,7 @@ function validate() {
 }
 
 // ============================================================
-// UTF-16LE Base64 encoder
+// UTF-16LE Base64 encoder (PowerShell EncodedCommand)
 // ============================================================
 function toPSEncoded(script) {
     const buf  = new ArrayBuffer(script.length * 2);
@@ -586,7 +555,7 @@ function toPSEncoded(script) {
 }
 
 // ============================================================
-// Generate
+// Generate Deployment Command
 // ============================================================
 function generatePayload() {
     if (!validate()) return;
@@ -597,10 +566,24 @@ function generatePayload() {
     const province   = document.getElementById('province').value;
 
     const lines = [];
+
+    // 1. สร้างโฟลเดอร์
     lines.push("$d = 'C:\\IT_Support'");
     lines.push("New-Item -ItemType Directory -Force -Path $d | Out-Null");
+
+    // 2. เขียน SystemConfig.json
     lines.push("$cfg = [ordered]@{ BU='" + bu + "'; BranchID='" + branch + "'; DeviceType='" + deviceType + "'; Province='" + province + "' }");
     lines.push("[IO.File]::WriteAllText(($d+'\\SystemConfig.json'), ($cfg|ConvertTo-Json), [Text.Encoding]::UTF8)");
+    lines.push("Write-Host 'Config OK: BU=" + bu + " Branch=" + branch + " Type=" + deviceType + "'");
+
+    // 3. ✅ สร้าง SpbKey.txt (Supabase Anon Key)
+    lines.push("");
+    lines.push("# SAM v3.3.0: สร้าง SpbKey.txt — Agent ดึง Key จากไฟล์นี้");
+    lines.push("[IO.File]::WriteAllText(($d+'\\SpbKey.txt'), '" + SUPABASE_KEY + "', [Text.Encoding]::UTF8)");
+    lines.push("if(Test-Path ($d+'\\SpbKey.txt')) { Write-Host 'SpbKey.txt OK' } else { Write-Host 'ERROR: SpbKey.txt failed'; exit 1 }");
+
+    // 4. Download function
+    lines.push("");
     lines.push("function Get-SAMFile($url,$out,$minKB=5) {");
     lines.push("  for($i=1;$i -le 3;$i++) {");
     lines.push("    try { iwr $url -OutFile $out -UseBasicParsing -TimeoutSec 60 -EA Stop }");
@@ -611,33 +594,146 @@ function generatePayload() {
     lines.push("  }");
     lines.push("  Write-Host ('FAILED: '+$url); return $false");
     lines.push("}");
+
+    // 5. Download ไฟล์ทั้งหมด
+    lines.push("");
     lines.push("$ok = $true");
     lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.scheduler + "' ($d+'\\SAM_Scheduler.ps1') 5)");
-    lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.agent     + "' ($d+'\\SAM_Agent.ps1')     20)");
-    lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.update    + "' ($d+'\\SAM_Update.ps1')    5)");
-    lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.smartctl  + "' ($d+'\\smartctl.exe')      500)");
+    lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.agent     + "' ($d+'\\SAM_Agent.ps1') 20)");
+    lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.update    + "' ($d+'\\SAM_Update.ps1') 5)");
+    lines.push("$ok = $ok -and (Get-SAMFile '" + URLS.smartctl  + "' ($d+'\\smartctl.exe') 500)");
     lines.push("if(-not $ok) { Write-Host 'ERROR: Download failed. Abort.'; exit 1 }");
-    lines.push("Write-Host 'All files verified OK'");
+    lines.push("Write-Host 'All files downloaded OK'");
+
+    // 6. ✅ ตรวจสอบไฟล์ครบถ้วน
+    lines.push("");
+    lines.push("# ตรวจสอบไฟล์ครบถ้วน");
+    lines.push("$required = @('SAM_Agent.ps1','SAM_Scheduler.ps1','SAM_Update.ps1','smartctl.exe','SpbKey.txt','SystemConfig.json')");
+    lines.push("$missing = $required | Where-Object { -not (Test-Path ($d+'\\'+$_)) }");
+    lines.push("if($missing) { Write-Host ('MISSING: '+($missing -join ', ')); exit 1 }");
+    lines.push("Write-Host 'File check PASSED: All ' + $required.Count + ' files present'");
+
+    // 7. ตรวจสอบ Key ไม่ว่าง
+    lines.push("");
+    lines.push("# ตรวจสอบ SpbKey.txt ไม่ว่าง");
+    lines.push("$key = (Get-Content ($d+'\\SpbKey.txt') -Raw).Trim()");
+    lines.push("if([string]::IsNullOrWhiteSpace($key)) { Write-Host 'ERROR: SpbKey.txt is empty'; exit 1 }");
+    lines.push("Write-Host 'SpbKey check PASSED (' + $key.Length + ' chars)'");
+
+    // 8. Setup Tasks + ForceFullSync
+    lines.push("");
+    lines.push("Write-Host 'Setting up Scheduled Tasks...'");
     lines.push("& ($d+'\\SAM_Scheduler.ps1') -Setup");
+    lines.push("Write-Host 'Running initial FullSync...'");
     lines.push("& ($d+'\\SAM_Agent.ps1') -Silent -ForceFullSync");
+    lines.push("Write-Host '=== SAM v" + VERSION + " Installation Complete ==='");
 
     const script  = lines.join("\n");
     const encoded = toPSEncoded(script);
     const cmd     = "powershell -ExecutionPolicy Bypass -EncodedCommand " + encoded;
 
-    document.getElementById('result-title').textContent = 'New Install — v3.1.0';
-    document.getElementById('cmdOutput').textContent = cmd;
+    // อัปเดต UI
+    document.getElementById('result-title').textContent = 'New Install — v' + VERSION;
+    document.getElementById('cmdOutput').textContent    = cmd;
 
-    const steps = ['Write Config','Download & Verify','Setup Tasks','ForceFullSync','Done ✓'];
+    const steps = ['Write Config','Create SpbKey','Download & Verify','File Check','Setup Tasks','ForceFullSync','Done ✓'];
     document.getElementById('stepPills').innerHTML = steps.map(s => '<div class="step-pill">'+s+'</div>').join('');
+
+    // Reset verify status
+    resetVerifyStatus();
 
     const card = document.getElementById('resultCard');
     card.classList.add('visible');
-    setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+    setTimeout(() => card.scrollIntoView({ behavior:'smooth', block:'nearest' }), 100);
 
     const copyBtn = document.getElementById('copyBtn');
     copyBtn.classList.remove('copied');
     copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy to Clipboard';
+}
+
+// ============================================================
+// ✅ NEW: ตรวจสอบไฟล์บน GitHub ก่อน Deploy
+// ============================================================
+function resetVerifyStatus() {
+    const ids = ['vs-agent','vs-scheduler','vs-update','vs-version','vs-smartctl'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        el.textContent  = 'รอตรวจสอบ';
+        el.className    = 'verify-status vs-wait';
+    });
+}
+
+function setVerifyStatus(id, status, text) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.className   = 'verify-status ' + {
+        ok:'vs-ok', err:'vs-err', checking:'vs-checking', wait:'vs-wait'
+    }[status];
+}
+
+async function checkUrl(url, minBytes = 1000) {
+    try {
+        // ใช้ fetch HEAD ก่อน (เร็ว ไม่โหลดทั้งไฟล์)
+        // แต่ GitHub raw อาจไม่รองรับ HEAD → ใช้ GET + abort หลัง header
+        const ctrl = new AbortController();
+        const timeout = setTimeout(() => ctrl.abort(), 8000);
+        const res = await fetch(url, { method:'GET', signal:ctrl.signal, cache:'no-cache' });
+        clearTimeout(timeout);
+        if (!res.ok) return { ok:false, msg:'HTTP ' + res.status };
+        // อ่าน content-length ถ้ามี
+        const len = res.headers.get('content-length');
+        if (len && parseInt(len) < minBytes) return { ok:false, msg:'File too small ('+ len +' bytes)' };
+        return { ok:true, msg:'✅ พร้อม' };
+    } catch(e) {
+        if (e.name === 'AbortError') return { ok:false, msg:'Timeout' };
+        return { ok:false, msg:'Network error' };
+    }
+}
+
+async function verifyFiles() {
+    const btn = document.getElementById('btnVerify');
+    btn.disabled   = true;
+    btn.innerHTML  = '<div style="width:12px;height:12px;border:2px solid rgba(0,229,255,.3);border-top-color:var(--c-accent);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0"></div> กำลังตรวจสอบ...';
+
+    // เพิ่ม spin keyframe ถ้ายังไม่มี
+    if (!document.getElementById('spin-style')) {
+        const s = document.createElement('style');
+        s.id = 'spin-style';
+        s.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
+        document.head.appendChild(s);
+    }
+
+    // Set all to checking
+    ['vs-agent','vs-scheduler','vs-update','vs-version','vs-smartctl'].forEach(id =>
+        setVerifyStatus(id, 'checking', '⏳ กำลังตรวจ...')
+    );
+
+    // ตรวจทีละไฟล์
+    const checks = [
+        { id:'vs-agent',     url:URLS.agent,     minBytes:15000, label:'SAM_Agent.txt' },
+        { id:'vs-scheduler', url:URLS.scheduler, minBytes:3000,  label:'SAM_Scheduler.txt' },
+        { id:'vs-update',    url:URLS.update,    minBytes:3000,  label:'SAM_Update.txt' },
+        { id:'vs-version',   url:URLS.version,   minBytes:5,     label:'version.txt' },
+        { id:'vs-smartctl',  url:URLS.smartctl,  minBytes:1000,  label:'smartctl.exe' },
+    ];
+
+    let allOK = true;
+    for (const c of checks) {
+        const result = await checkUrl(c.url, c.minBytes);
+        if (result.ok) {
+            setVerifyStatus(c.id, 'ok', '✅ พร้อม');
+        } else {
+            setVerifyStatus(c.id, 'err', '❌ ' + result.msg);
+            allOK = false;
+        }
+        // หน่วงเล็กน้อยให้ดู animation
+        await new Promise(r => setTimeout(r, 200));
+    }
+
+    btn.disabled  = false;
+    btn.innerHTML = allOK
+        ? '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> ✅ ไฟล์ครบทุกตัว พร้อม Deploy'
+        : '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> ⚠ มีไฟล์ผิดพลาด ตรวจสอบด้านบน';
 }
 
 // ============================================================
@@ -664,7 +760,7 @@ function fallbackCopy(text, cb) {
     const el = document.createElement('textarea');
     el.value = text; el.style.cssText = 'position:fixed;opacity:0;';
     document.body.appendChild(el); el.select();
-    try { document.execCommand('copy'); cb(); } catch(e) {}
+    try { document.execCommand('copy'); cb(); } catch(e){}
     document.body.removeChild(el);
 }
 
