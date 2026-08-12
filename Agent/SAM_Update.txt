@@ -1,426 +1,503 @@
-﻿# ==============================================================================
-# S.A.M. UPDATE  (Smart Agent Management - Self-Healing & Auto-Updater)
-# VERSION     : 3.1.0
-# FILE        : SAM_Update.ps1
-# ROLE        : ตรวจสอบ version, ดาวน์โหลด patch, ตรวจ hash, ซ่อมไฟล์เสีย
-#               ถูกเรียกโดย SAM_Scheduler ทุกวัน 07:00 น.
-# ==============================================================================
-param(
-    [switch]$Silent,      # ไม่แสดง console
-    [switch]$ForceCheck   # บังคับตรวจแม้เพิ่งตรวจไปแล้ว
-)
+﻿#Requires -Version 5.1
+<#
+.SYNOPSIS
+    S.A.M. Update Manager v3.3.0
+.DESCRIPTION
+    - ตรวจสอบ version ใหม่จาก GitHub
+    - Download และ Replace ไฟล์ที่อัปเดต
+    - Self-Healing: ตรวจสอบและซ่อมไฟล์สำคัญ (รวม SpbKey.txt)
+    - SpbKey.txt: สร้างใหม่อัตโนมัติถ้าหายหรือว่างเปล่า
+#>
 
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
-# ==========================================
+# ============================================================
 # CONSTANTS
-# ==========================================
-$SAM_VERSION = "3.1.0"
-$WorkDir     = "C:\IT_Support"
-$LogFile     = "$WorkDir\SAM_Log.txt"
+# ============================================================
+$SAM_UPDATE_VERSION = '3.3.0'
+$WorkDir            = 'C:\IT_Support'
+$LogFile            = "$WorkDir\SAM_Log.txt"
+$VersionFile        = "$WorkDir\version.txt"
+$KeyFile            = "$WorkDir\SpbKey.txt"
 
-# Remote URLs (GitHub RAW)
-$BaseRawUrl  = "https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent"
-$VersionUrl  = "$BaseRawUrl/version.txt"           # รูปแบบ: 3.0.1|sha256_agent|sha256_scheduler|sha256_update
-$AgentUrl    = "$BaseRawUrl/SAM_Agent.txt"         # ไฟล์จริง (นามสกุล .txt บน GitHub)
-$SchedulerUrl= "$BaseRawUrl/SAM_Scheduler.txt"
-$UpdateUrl   = "$BaseRawUrl/SAM_Update.txt"
-$SmartCtlUrl = "https://github.com/johnapichat-dotcom/SamAgent/releases/download/UpdateSAM/smartctl.exe"
+# Supabase Anon Key — Embedded Fallback
+# ใช้สร้าง SpbKey.txt ถ้าไฟล์หายหรือว่างเปล่า
+$EmbeddedKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhhYnZoZm9vc21xeXJia29obW9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3NDg2NDAsImV4cCI6MjA5MzMyNDY0MH0.12i8J50IPfEkTcq7xFJz54rA4MLARcHOsTtibi1iG2s'
 
-# Local paths
-$AgentScript     = "$WorkDir\SAM_Agent.ps1"
-$SchedulerScript = "$WorkDir\SAM_Scheduler.ps1"
-$UpdateScript    = "$WorkDir\SAM_Update.ps1"
-$SmartCtlPath    = "$WorkDir\smartctl.exe"
-$UpdateStateFile = "$WorkDir\UpdateState.json"
+# GitHub URLs
+$RAW_BASE   = 'https://raw.githubusercontent.com/johnapichat-dotcom/SamAgent/main/Agent'
+$URL_VERSION    = "$RAW_BASE/version.txt"
+$URL_AGENT      = "$RAW_BASE/SAM_Agent.txt"
+$URL_SCHEDULER  = "$RAW_BASE/SAM_Scheduler.txt"
+$URL_UPDATE     = "$RAW_BASE/SAM_Update.txt"
 
-# Task names (ต้องตรงกับ Scheduler)
-$TASK_AGENT_SYNC   = "SAM_Agent_Sync"
-$TASK_C2_DAY       = "SAM_C2_Poll_Day"
-$TASK_C2_NIGHT     = "SAM_C2_Poll_Night"
-$TASK_FULL_SYNC    = "SAM_FullSync_Weekly"
-$TASK_UPDATE_CHECK = "SAM_Update_Check"
-$TASK_LOG_ROTATE   = "SAM_LogRotate"
+# File size minimums (KB)
+$MIN_AGENT     = 20
+$MIN_SCHEDULER = 5
+$MIN_UPDATE    = 5
 
-# ==========================================
-# UTILITY
-# ==========================================
+# ============================================================
+# LOGGING
+# ============================================================
 function Write-SAMLog {
-    param([string]$Message, [string]$Level = "INFO")
-    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $Line = "$Timestamp [$Level] [Update] $Message"
-    try { Add-Content -Path $LogFile -Value $Line -Encoding UTF8 -ErrorAction SilentlyContinue } catch {}
-    if (-not $Silent) { Write-Host $Line -ForegroundColor Magenta }
-}
-
-function Get-FileHash256 {
-    param([string]$FilePath)
+    param(
+        [string]$Message,
+        [ValidateSet('INFO','WARN','ERROR','DEBUG')]
+        [string]$Level = 'INFO'
+    )
+    $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $line = "$ts [$Level] [Update] $Message"
     try {
-        if (-not (Test-Path $FilePath)) { return "" }
-        $SHA256 = [System.Security.Cryptography.SHA256]::Create()
-        $Stream = [System.IO.File]::OpenRead($FilePath)
-        $Hash   = [BitConverter]::ToString($SHA256.ComputeHash($Stream)) -replace '-'
-        $Stream.Close()
-        return $Hash.ToLower()
-    } catch { return "" }
+        Add-Content -Path $LogFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {}
+    if ($Level -in 'WARN','ERROR') {
+        Write-Host $line -ForegroundColor $(if ($Level -eq 'ERROR') { 'Red' } else { 'Yellow' })
+    } else {
+        Write-Host $line
+    }
 }
 
-function Get-StringHash256 {
-    param([string]$Content)
+# ============================================================
+# DOWNLOAD HELPER
+# ============================================================
+function Get-SAMFile {
+    param(
+        [string]$Url,
+        [string]$OutPath,
+        [int]   $MinKB   = 5,
+        [int]   $Retries = 3
+    )
+    for ($i = 1; $i -le $Retries; $i++) {
+        try {
+            Invoke-WebRequest -Uri $Url -OutFile $OutPath `
+                -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+
+            if ((Test-Path $OutPath) -and
+                (Get-Item $OutPath).Length -ge ($MinKB * 1KB)) {
+                $sizeKB = [math]::Round((Get-Item $OutPath).Length / 1KB, 1)
+                Write-SAMLog "Downloaded: $(Split-Path $OutPath -Leaf) (${sizeKB}KB)"
+                return $true
+            }
+            Write-SAMLog "File too small (attempt $i): $OutPath" -Level 'WARN'
+        }
+        catch {
+            Write-SAMLog "Download fail attempt $i/${Retries}: $Url — $($_.Exception.Message)" -Level 'WARN'
+            if ($i -lt $Retries) { Start-Sleep -Seconds (10 * $i) }
+        }
+    }
+    Write-SAMLog "FAILED to download: $Url" -Level 'ERROR'
+    return $false
+}
+
+# ============================================================
+# ✅ SpbKey.txt: ตรวจสอบและสร้างถ้าหาย
+# ============================================================
+function Confirm-SpbKey {
+    param([bool]$ForceCreate = $false)
+
+    $needCreate = $false
+
+    # ตรวจว่าไฟล์มีอยู่
+    if (-not (Test-Path $KeyFile)) {
+        Write-SAMLog "SpbKey.txt not found" -Level 'WARN'
+        $needCreate = $true
+    }
+    else {
+        # ตรวจว่าไม่ว่างเปล่า
+        try {
+            $content = (Get-Content $KeyFile -Raw -Encoding UTF8 -ErrorAction Stop).Trim()
+            if ([string]::IsNullOrWhiteSpace($content)) {
+                Write-SAMLog "SpbKey.txt is empty" -Level 'WARN'
+                $needCreate = $true
+            }
+            # ตรวจว่า Key มีความยาวสมเหตุสมผล (JWT ควรยาวกว่า 100 chars)
+            elseif ($content.Length -lt 100) {
+                Write-SAMLog "SpbKey.txt content too short ($($content.Length) chars)" -Level 'WARN'
+                $needCreate = $true
+            }
+            # ตรวจว่าเป็น JWT format (ขึ้นต้นด้วย eyJ หรือ sb_)
+            elseif (-not ($content.StartsWith('eyJ') -or $content.StartsWith('sb_'))) {
+                Write-SAMLog "SpbKey.txt format invalid (not JWT/sb_ format)" -Level 'WARN'
+                $needCreate = $true
+            }
+            else {
+                # ✅ Key ดี
+                Write-SAMLog "SpbKey.txt OK ($($content.Length) chars)"
+                return $true
+            }
+        }
+        catch {
+            Write-SAMLog "SpbKey.txt read error: $($_.Exception.Message)" -Level 'WARN'
+            $needCreate = $true
+        }
+    }
+
+    # สร้างไฟล์ใหม่ถ้าจำเป็น
+    if ($needCreate -or $ForceCreate) {
+        try {
+            # Backup ไฟล์เดิมถ้ามี
+            if (Test-Path $KeyFile) {
+                Copy-Item $KeyFile "$KeyFile.bak" -Force -ErrorAction SilentlyContinue
+                Write-SAMLog "SpbKey.txt backed up → SpbKey.txt.bak"
+            }
+
+            # เขียน Key ใหม่
+            [IO.File]::WriteAllText($KeyFile, $EmbeddedKey, [Text.Encoding]::UTF8)
+
+            # ตรวจสอบหลังเขียน
+            if (Test-Path $KeyFile) {
+                $written = (Get-Content $KeyFile -Raw -Encoding UTF8).Trim()
+                if ($written -eq $EmbeddedKey) {
+                    Write-SAMLog "SpbKey.txt created/restored OK ($($EmbeddedKey.Length) chars)"
+
+                    # Set permission: SYSTEM เท่านั้น
+                    try {
+                        $acl = Get-Acl $KeyFile
+                        $acl.SetAccessRuleProtection($true, $false)
+                        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                            'SYSTEM', 'FullControl', 'Allow')
+                        $acl.AddAccessRule($rule)
+                        Set-Acl -Path $KeyFile -AclObject $acl -ErrorAction SilentlyContinue
+                    } catch {
+                        # ไม่ fail ถ้า permission set ไม่ได้
+                    }
+                    return $true
+                }
+                else {
+                    Write-SAMLog "SpbKey.txt content mismatch after write" -Level 'ERROR'
+                    return $false
+                }
+            }
+            else {
+                Write-SAMLog "SpbKey.txt not found after write" -Level 'ERROR'
+                return $false
+            }
+        }
+        catch {
+            Write-SAMLog "Failed to create SpbKey.txt: $($_.Exception.Message)" -Level 'ERROR'
+            return $false
+        }
+    }
+    return $false
+}
+
+# ============================================================
+# SELF-HEALING: ตรวจสอบไฟล์สำคัญ
+# ============================================================
+function Invoke-SelfHealing {
+    Write-SAMLog "--- Self-Healing Check ---"
+    $healed = 0
+
+    # 1. ✅ SpbKey.txt (สำคัญที่สุด — ตรวจก่อน)
+    Write-SAMLog "Checking SpbKey.txt..."
+    $keyOK = Confirm-SpbKey
+    if (-not $keyOK) {
+        Write-SAMLog "SpbKey.txt healing FAILED — agent may not work" -Level 'ERROR'
+    } else {
+        $healed++
+    }
+
+    # 2. SAM_Agent.ps1
+    $agentFile = "$WorkDir\SAM_Agent.ps1"
+    if (-not (Test-Path $agentFile) -or
+        (Get-Item $agentFile -ErrorAction SilentlyContinue).Length -lt ($MIN_AGENT * 1KB)) {
+        Write-SAMLog "Healing SAM_Agent.ps1..." -Level 'WARN'
+        $tmp = "$WorkDir\SAM_Agent_heal.ps1"
+        if (Get-SAMFile $URL_AGENT $tmp $MIN_AGENT) {
+            Move-Item $tmp $agentFile -Force
+            Write-SAMLog "SAM_Agent.ps1 healed OK"
+            $healed++
+        }
+    } else {
+        Write-SAMLog "SAM_Agent.ps1 OK ($(
+            [math]::Round((Get-Item $agentFile).Length/1KB,1))KB)"
+        $healed++
+    }
+
+    # 3. SAM_Scheduler.ps1
+    $schedulerFile = "$WorkDir\SAM_Scheduler.ps1"
+    if (-not (Test-Path $schedulerFile) -or
+        (Get-Item $schedulerFile -ErrorAction SilentlyContinue).Length -lt ($MIN_SCHEDULER * 1KB)) {
+        Write-SAMLog "Healing SAM_Scheduler.ps1..." -Level 'WARN'
+        $tmp = "$WorkDir\SAM_Scheduler_heal.ps1"
+        if (Get-SAMFile $URL_SCHEDULER $tmp $MIN_SCHEDULER) {
+            Move-Item $tmp $schedulerFile -Force
+            Write-SAMLog "SAM_Scheduler.ps1 healed OK"
+            $healed++
+        }
+    } else {
+        Write-SAMLog "SAM_Scheduler.ps1 OK ($(
+            [math]::Round((Get-Item $schedulerFile).Length/1KB,1))KB)"
+        $healed++
+    }
+
+    # 4. SystemConfig.json
+    $configFile = "$WorkDir\SystemConfig.json"
+    if (-not (Test-Path $configFile)) {
+        Write-SAMLog "SystemConfig.json missing — please reinstall" -Level 'ERROR'
+    } else {
+        Write-SAMLog "SystemConfig.json OK"
+        $healed++
+    }
+
+    Write-SAMLog "Self-Healing: $healed/4 files OK"
+    return $healed
+}
+
+# ============================================================
+# VERSION CHECK
+# ============================================================
+function Get-RemoteVersion {
     try {
-        $SHA256 = [System.Security.Cryptography.SHA256]::Create()
-        $Bytes  = [System.Text.Encoding]::UTF8.GetBytes($Content)
-        return ([BitConverter]::ToString($SHA256.ComputeHash($Bytes)) -replace '-').ToLower()
-    } catch { return "" }
+        $tmp = "$env:TEMP\sam_version_check.txt"
+        $r = Invoke-WebRequest -Uri $URL_VERSION -OutFile $tmp `
+            -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        $ver = (Get-Content $tmp -Raw).Trim()
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        return $ver
+    }
+    catch {
+        Write-SAMLog "Cannot reach version server: $($_.Exception.Message)" -Level 'WARN'
+        return $null
+    }
 }
 
-function Test-ScriptIntegrity {
-    param([string]$FilePath, [string]$ExpectedHash = "")
-    # ตรวจขั้นพื้นฐาน: ไฟล์มีอยู่และมีขนาดสมเหตุสมผล (> 1KB)
-    if (-not (Test-Path $FilePath)) { return $false }
-    $Size = (Get-Item $FilePath).Length
-    if ($Size -lt 1024) {
-        Write-SAMLog "File too small ($Size bytes): $FilePath" -Level "WARN"
+function Get-LocalVersion {
+    if (Test-Path $VersionFile) {
+        return (Get-Content $VersionFile -Raw).Trim()
+    }
+    return '0.0.0'
+}
+
+function Compare-Version {
+    param([string]$Local, [string]$Remote)
+    try {
+        $l = [version]$Local
+        $r = [version]$Remote
+        return $r -gt $l
+    }
+    catch { return $false }
+}
+
+# ============================================================
+# UPDATE FILES
+# ============================================================
+function Invoke-UpdateFiles {
+    param([string]$RemoteVersion)
+
+    Write-SAMLog "Updating to v$RemoteVersion..."
+    $updated = 0
+
+    # Backup current files
+    $backupDir = "$WorkDir\Backup_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+    New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+
+    foreach ($file in @('SAM_Agent.ps1','SAM_Scheduler.ps1','SAM_Update.ps1')) {
+        $src = "$WorkDir\$file"
+        if (Test-Path $src) {
+            Copy-Item $src "$backupDir\$file" -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Write-SAMLog "Backup created: $backupDir"
+
+    # Download new files
+    $downloads = @(
+        @{ Url=$URL_AGENT;     Out="$WorkDir\SAM_Agent_new.ps1";     MinKB=$MIN_AGENT },
+        @{ Url=$URL_SCHEDULER; Out="$WorkDir\SAM_Scheduler_new.ps1"; MinKB=$MIN_SCHEDULER },
+        @{ Url=$URL_UPDATE;    Out="$WorkDir\SAM_Update_new.ps1";    MinKB=$MIN_UPDATE }
+    )
+
+    $allOK = $true
+    foreach ($dl in $downloads) {
+        if (-not (Get-SAMFile $dl.Url $dl.Out $dl.MinKB)) {
+            $allOK = $false
+            Write-SAMLog "Download failed: $($dl.Out)" -Level 'ERROR'
+        }
+    }
+
+    if (-not $allOK) {
+        Write-SAMLog "Update aborted — download error" -Level 'ERROR'
         return $false
     }
-    # ตรวจ syntax เบื้องต้น (ต้องมี param block หรือ function หรือ #)
-    try {
-        $Content = Get-Content $FilePath -Raw -ErrorAction Stop
-        if ($Content -notmatch "(?i)(param\s*\(|function\s+\w|#.*SAM)") {
-            Write-SAMLog "File failed syntax sanity check: $FilePath" -Level "WARN"
-            return $false
+
+    # Replace files
+    $replacePairs = @(
+        @{ New="$WorkDir\SAM_Agent_new.ps1";     Final="$WorkDir\SAM_Agent.ps1" },
+        @{ New="$WorkDir\SAM_Scheduler_new.ps1"; Final="$WorkDir\SAM_Scheduler.ps1" },
+        @{ New="$WorkDir\SAM_Update_new.ps1";    Final="$WorkDir\SAM_Update.ps1" }
+    )
+
+    foreach ($pair in $replacePairs) {
+        try {
+            Move-Item $pair.New $pair.Final -Force
+            Write-SAMLog "Replaced: $(Split-Path $pair.Final -Leaf)"
+            $updated++
         }
-    } catch { return $false }
-    # ถ้ามี expected hash ให้ตรวจด้วย
-    if ($ExpectedHash -and $ExpectedHash.Length -eq 64) {
-        $ActualHash = Get-FileHash256 $FilePath
-        if ($ActualHash -ne $ExpectedHash.ToLower()) {
-            Write-SAMLog "Hash mismatch: $FilePath (expected $ExpectedHash, got $ActualHash)" -Level "WARN"
-            return $false
+        catch {
+            Write-SAMLog "Replace failed: $($pair.Final) — $($_.Exception.Message)" -Level 'ERROR'
         }
     }
-    return $true
-}
 
-function Download-SafeScript {
-    param([string]$Url, [string]$OutPath, [string]$ExpectedHash = "", [string]$Label = "")
-    $TmpPath = "$env:TEMP\SAM_tmp_$([System.IO.Path]::GetRandomFileName()).ps1"
-    try {
-        Invoke-WebRequest -Uri $Url -OutFile $TmpPath -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+    # Update version file
+    [IO.File]::WriteAllText($VersionFile, $RemoteVersion, [Text.Encoding]::UTF8)
+    Write-SAMLog "Version updated: $RemoteVersion"
 
-        # Verify integrity
-        if (-not (Test-ScriptIntegrity -FilePath $TmpPath -ExpectedHash $ExpectedHash)) {
-            Write-SAMLog "Downloaded file failed integrity check: $Label" -Level "ERROR"
-            Remove-Item $TmpPath -Force -ErrorAction SilentlyContinue
-            return $false
-        }
+    # ✅ ตรวจ SpbKey.txt หลัง Update ด้วย
+    Write-SAMLog "Post-update SpbKey.txt verification..."
+    Confirm-SpbKey | Out-Null
 
-        # Atomic replace: backup → replace → remove backup
-        $BackupPath = "$OutPath.bak"
-        if (Test-Path $OutPath) {
-            Copy-Item $OutPath $BackupPath -Force -ErrorAction SilentlyContinue
-        }
-        Move-Item $TmpPath $OutPath -Force -ErrorAction Stop
-        Remove-Item $BackupPath -Force -ErrorAction SilentlyContinue
-
-        Write-SAMLog "Updated successfully: $Label ($OutPath)"
-        return $true
-    } catch {
-        Write-SAMLog "Download failed for $Label ($Url): $($_.Exception.Message)" -Level "ERROR"
-        # Rollback ถ้ามี backup
-        if (Test-Path "$OutPath.bak") {
-            Copy-Item "$OutPath.bak" $OutPath -Force -ErrorAction SilentlyContinue
-            Write-SAMLog "Rolled back to backup: $Label" -Level "WARN"
-        }
-        Remove-Item $TmpPath -Force -ErrorAction SilentlyContinue
-        return $false
+    # Cleanup old backups (เก็บแค่ 3 ล่าสุด)
+    $backups = Get-ChildItem "$WorkDir\Backup_*" -Directory |
+               Sort-Object Name -Descending | Select-Object -Skip 3
+    foreach ($b in $backups) {
+        Remove-Item $b.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        Write-SAMLog "Removed old backup: $($b.Name)"
     }
+
+    Write-SAMLog "Update complete: $updated/3 files replaced"
+    return ($updated -eq 3)
 }
 
-# ==========================================
-# NETWORK CHECK
-# ==========================================
-Write-SAMLog "=== SAM Update Check v$SAM_VERSION ==="
+# ============================================================
+# MAIN
+# ============================================================
+function Main {
+    Write-SAMLog "=== SAM Update Manager v$SAM_UPDATE_VERSION ==="
 
-# Jitter 0-4 ชม. — กระจาย 7000 เครื่องไม่ให้ hit GitHub พร้อมกัน
-if ($Silent -and -not $ForceCheck) {
-    $JitterSec = Get-Random -Minimum 0 -Maximum 14400
-    $JitterMin = [math]::Round($JitterSec / 60, 1)
-    Write-SAMLog "Jitter delay: $JitterMin min ($(Get-Date).AddSeconds($JitterSec).ToString('HH:mm')))"
-    Start-Sleep -Seconds $JitterSec
-}
+    # ตรวจ WorkDir
+    if (-not (Test-Path $WorkDir)) {
+        Write-SAMLog "WorkDir not found: $WorkDir — abort" -Level 'ERROR'
+        exit 1
+    }
 
-$NetOK = $false
-try {
-    $R = Invoke-WebRequest -Uri "http://www.msftconnecttest.com/connecttest.txt" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
-    if ($R.Content -match "Microsoft Connect Test") { $NetOK = $true }
-} catch {}
+    # ============================================================
+    # STEP 1: Self-Healing (รวม SpbKey.txt)
+    # ============================================================
+    Write-SAMLog "--- STEP 1: Self-Healing ---"
+    $healed = Invoke-SelfHealing
 
-if (-not $NetOK) {
-    Write-SAMLog "Network unavailable. Update check skipped." -Level "WARN"
+    # ============================================================
+    # STEP 2: ตรวจ SpbKey.txt อีกครั้ง (Critical Check)
+    # ============================================================
+    Write-SAMLog "--- STEP 2: Critical File Check ---"
+    $keyOK = $false
+    if (Test-Path $KeyFile) {
+        $keyContent = (Get-Content $KeyFile -Raw -Encoding UTF8 -ErrorAction SilentlyContinue).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($keyContent) -and
+            $keyContent.Length -ge 100 -and
+            ($keyContent.StartsWith('eyJ') -or $keyContent.StartsWith('sb_'))) {
+            Write-SAMLog "SpbKey.txt VERIFIED ✅ ($($keyContent.Length) chars)"
+            $keyOK = $true
+        }
+    }
+
+    if (-not $keyOK) {
+        Write-SAMLog "SpbKey.txt CRITICAL FAIL — forcing recreate" -Level 'ERROR'
+        $keyOK = Confirm-SpbKey -ForceCreate $true
+        if (-not $keyOK) {
+            Write-SAMLog "SpbKey.txt cannot be created — update may fail" -Level 'ERROR'
+        }
+    }
+
+    # ============================================================
+    # STEP 3: Version Check
+    # ============================================================
+    Write-SAMLog "--- STEP 3: Version Check ---"
+    $localVer  = Get-LocalVersion
+    $remoteVer = Get-RemoteVersion
+
+    if ($null -eq $remoteVer) {
+        Write-SAMLog "Cannot check remote version — skip update" -Level 'WARN'
+        Write-SAMLog "=== Update Manager Done (no network) ==="
+        exit 0
+    }
+
+    Write-SAMLog "Local:  v$localVer"
+    Write-SAMLog "Remote: v$remoteVer"
+
+    # ============================================================
+    # STEP 4: Update (ถ้ามี version ใหม่)
+    # ============================================================
+    if (Compare-Version $localVer $remoteVer) {
+        Write-SAMLog "--- STEP 4: Update Available → v$remoteVer ---"
+        $updateOK = Invoke-UpdateFiles -RemoteVersion $remoteVer
+
+        if ($updateOK) {
+            Write-SAMLog "✅ Update SUCCESS: v$localVer → v$remoteVer"
+
+            # ✅ ตรวจ SpbKey.txt หลัง Update สำเร็จ
+            Write-SAMLog "Final SpbKey.txt check after update..."
+            $finalKeyOK = Confirm-SpbKey
+            if ($finalKeyOK) {
+                Write-SAMLog "SpbKey.txt final check PASSED ✅"
+            } else {
+                Write-SAMLog "SpbKey.txt final check FAILED ❌" -Level 'ERROR'
+            }
+        } else {
+            Write-SAMLog "❌ Update FAILED" -Level 'ERROR'
+            exit 1
+        }
+    } else {
+        Write-SAMLog "Already up-to-date (v$localVer)"
+    }
+
+    # ============================================================
+    # STEP 5: Final Summary
+    # ============================================================
+    Write-SAMLog "--- STEP 5: Final Summary ---"
+
+    $files = @(
+        @{ Name='SAM_Agent.ps1';    MinKB=$MIN_AGENT },
+        @{ Name='SAM_Scheduler.ps1';MinKB=$MIN_SCHEDULER },
+        @{ Name='SAM_Update.ps1';   MinKB=$MIN_UPDATE },
+        @{ Name='SpbKey.txt';       MinKB=0 },
+        @{ Name='SystemConfig.json';MinKB=0 }
+    )
+
+    $allOK = $true
+    foreach ($f in $files) {
+        $path = "$WorkDir\$($f.Name)"
+        if (Test-Path $path) {
+            $sizeKB = [math]::Round((Get-Item $path).Length / 1KB, 2)
+            if ($f.MinKB -gt 0 -and $sizeKB -lt $f.MinKB) {
+                Write-SAMLog "⚠ $($f.Name) too small: ${sizeKB}KB (min $($f.MinKB)KB)" -Level 'WARN'
+                $allOK = $false
+            } else {
+                Write-SAMLog "✅ $($f.Name) OK (${sizeKB}KB)"
+            }
+        } else {
+            Write-SAMLog "❌ $($f.Name) MISSING" -Level 'ERROR'
+            $allOK = $false
+        }
+    }
+
+    # ✅ SpbKey.txt content check ใน Summary
+    if (Test-Path $KeyFile) {
+        $keyLen = ((Get-Content $KeyFile -Raw -Encoding UTF8).Trim()).Length
+        if ($keyLen -ge 100) {
+            Write-SAMLog "✅ SpbKey.txt content OK ($keyLen chars)"
+        } else {
+            Write-SAMLog "❌ SpbKey.txt content INVALID ($keyLen chars)" -Level 'ERROR'
+            $allOK = $false
+        }
+    }
+
+    if ($allOK) {
+        Write-SAMLog "=== Update Manager COMPLETED ✅ ==="
+    } else {
+        Write-SAMLog "=== Update Manager COMPLETED WITH WARNINGS ⚠ ===" -Level 'WARN'
+    }
+
     exit 0
 }
 
-# ==========================================
-# SELF-HEALING: ตรวจไฟล์สำคัญก่อน
-# ==========================================
-Write-SAMLog "--- Self-Healing Check ---"
-
-$FilesToCheck = @{
-    $AgentScript     = @{ Url = $AgentUrl;      Label = "SAM_Agent" }
-    $SchedulerScript = @{ Url = $SchedulerUrl;  Label = "SAM_Scheduler" }
-    $UpdateScript    = @{ Url = $UpdateUrl;      Label = "SAM_Update" }
+# ============================================================
+# ENTRY POINT
+# ============================================================
+try {
+    Main
+} catch {
+    Write-SAMLog "Unhandled error: $($_.Exception.Message)" -Level 'ERROR'
+    exit 1
 }
-
-$HealingOccurred = $false
-foreach ($FilePath in $FilesToCheck.Keys) {
-    $Info = $FilesToCheck[$FilePath]
-    if (-not (Test-ScriptIntegrity -FilePath $FilePath)) {
-        Write-SAMLog "Corrupted/missing: $($Info.Label). Attempting self-heal..." -Level "WARN"
-        $Healed = Download-SafeScript -Url $Info.Url -OutPath $FilePath -Label $Info.Label
-        if ($Healed) {
-            $HealingOccurred = $true
-            Write-SAMLog "Self-healed: $($Info.Label)" -Level "INFO"
-        } else {
-            Write-SAMLog "Self-heal FAILED: $($Info.Label)" -Level "ERROR"
-        }
-    } else {
-        Write-SAMLog "OK: $($Info.Label)"
-    }
-}
-
-# smartctl.exe — download เฉพาะตอนไม่มีไฟล์ หรือ agent version มีการอัปเดต
-if (-not (Test-Path $SmartCtlPath) -or (Get-Item $SmartCtlPath).Length -lt 10240) {
-    Write-SAMLog "smartctl.exe missing/corrupt. Downloading from Releases..." -Level "WARN"
-    try {
-        Invoke-WebRequest -Uri $SmartCtlUrl -OutFile $SmartCtlPath -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
-        Write-SAMLog "smartctl.exe downloaded OK. Size: $([math]::Round((Get-Item $SmartCtlPath).Length/1KB,0)) KB"
-    } catch {
-        Write-SAMLog "smartctl.exe download failed: $($_.Exception.Message)" -Level "ERROR"
-    }
-} else {
-    Write-SAMLog "smartctl.exe OK ($([math]::Round((Get-Item $SmartCtlPath).Length/1KB,0)) KB) — skip download."
-}
-
-# ==========================================
-# SCHEDULED TASKS HEALTH CHECK
-# ==========================================
-Write-SAMLog "--- Scheduled Tasks Health Check ---"
-$TasksOK = $true
-foreach ($TName in @($TASK_AGENT_SYNC, $TASK_C2_DAY, $TASK_C2_NIGHT, $TASK_FULL_SYNC, $TASK_UPDATE_CHECK, $TASK_LOG_ROTATE)) {
-    $Task = Get-ScheduledTask -TaskName $TName -ErrorAction SilentlyContinue
-    if (-not $Task) {
-        Write-SAMLog "Task missing: $TName → Re-installing via Scheduler..." -Level "WARN"
-        $TasksOK = $false
-    } elseif ($Task.State -eq "Disabled") {
-        Write-SAMLog "Task disabled: $TName → Enabling..." -Level "WARN"
-        try { Enable-ScheduledTask -TaskName $TName -ErrorAction Stop | Out-Null; Write-SAMLog "Task re-enabled: $TName" } catch {}
-        $TasksOK = $false
-    }
-}
-
-if (-not $TasksOK) {
-    Write-SAMLog "Re-installing all tasks via SAM_Scheduler..."
-    try {
-        Start-Process powershell.exe -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$SchedulerScript`" -Setup" -WindowStyle Hidden -Wait
-        Write-SAMLog "Task re-installation triggered."
-    } catch { Write-SAMLog "Task re-installation failed: $($_.Exception.Message)" -Level "ERROR" }
-}
-
-# ==========================================
-# VERSION CHECK & UPDATE
-# ==========================================
-Write-SAMLog "--- Version Check ---"
-
-# โหลด Update State (ป้องกันตรวจซ้ำในวันเดียวกัน)
-$UpdateState = $null
-if (Test-Path $UpdateStateFile) {
-    try { $UpdateState = Get-Content $UpdateStateFile -Raw | ConvertFrom-Json } catch {}
-}
-$LastCheck = if ($UpdateState -and $UpdateState.LastCheck) { [datetime]$UpdateState.LastCheck } else { [datetime]::MinValue }
-$HoursSince = ((Get-Date) - $LastCheck).TotalHours
-
-if (-not $ForceCheck -and $HoursSince -lt 20) {
-    Write-SAMLog "Update check skipped (last check $([math]::Round($HoursSince,1)) hrs ago). Use -ForceCheck to override."
-    # ยังตรวจ self-healing ข้างบนแล้ว แต่ข้ามการดาวน์โหลด version ใหม่
-} else {
-    try {
-        $VersionRaw = (Invoke-WebRequest -Uri $VersionUrl -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop).Content.Trim()
-        # Format: VERSION|hash_agent|hash_scheduler|hash_update
-        $VerParts    = $VersionRaw -split '\|'
-        $RemoteVer   = $VerParts[0].Trim()
-        $RemoteHashA = if ($VerParts.Count -gt 1) { $VerParts[1].Trim() } else { "" }
-        $RemoteHashS = if ($VerParts.Count -gt 2) { $VerParts[2].Trim() } else { "" }
-        $RemoteHashU = if ($VerParts.Count -gt 3) { $VerParts[3].Trim() } else { "" }
-
-        Write-SAMLog "Local: v$SAM_VERSION | Remote: v$RemoteVer"
-
-        # เปรียบเทียบ version (simple semver string compare)
-        $LocalParts  = $SAM_VERSION -split '\.' | ForEach-Object { [int]$_ }
-        $RemoteParts = $RemoteVer -split '\.' | ForEach-Object { [int]$_ }
-        $NeedUpdate  = $false
-
-        for ($i = 0; $i -lt [math]::Max($LocalParts.Count, $RemoteParts.Count); $i++) {
-            $L = if ($i -lt $LocalParts.Count)  { $LocalParts[$i] }  else { 0 }
-            $R = if ($i -lt $RemoteParts.Count) { $RemoteParts[$i] } else { 0 }
-            if ($R -gt $L) { $NeedUpdate = $true; break }
-            if ($L -gt $R) { break }
-        }
-
-        if ($NeedUpdate) {
-            Write-SAMLog "New version available: v$RemoteVer. Updating..."
-
-            $UpdateResults = @{}
-
-            # ลำดับการอัปเดต: Update ก่อน (เพื่อให้ตัวใหม่ทำงานต่อ), แล้ว Scheduler, แล้ว Agent
-            $UpdateResults["SAM_Update"]     = Download-SafeScript -Url $UpdateUrl      -OutPath $UpdateScript    -ExpectedHash $RemoteHashU -Label "SAM_Update"
-            $UpdateResults["SAM_Scheduler"]  = Download-SafeScript -Url $SchedulerUrl   -OutPath $SchedulerScript -ExpectedHash $RemoteHashS -Label "SAM_Scheduler"
-            $UpdateResults["SAM_Agent"]      = Download-SafeScript -Url $AgentUrl       -OutPath $AgentScript     -ExpectedHash $RemoteHashA -Label "SAM_Agent"
-
-            $AllOK = $UpdateResults.Values | Where-Object { $_ -eq $false } | Measure-Object | Select-Object -ExpandProperty Count
-            if ($AllOK -eq 0) {
-                Write-SAMLog "All files updated to v$RemoteVer. Re-installing tasks..."
-                # Re-register tasks (อาจมีการเปลี่ยน argument หรือ schedule ใน version ใหม่)
-                try {
-                    Start-Process powershell.exe -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$SchedulerScript`" -Setup" -WindowStyle Hidden -Wait
-                    Write-SAMLog "Tasks re-registered post-update."
-                } catch { Write-SAMLog "Task re-registration post-update failed." -Level "WARN" }
-            } else {
-                Write-SAMLog "Partial update — $AllOK file(s) failed. Will retry next cycle." -Level "WARN"
-            }
-        } else {
-            Write-SAMLog "Already on latest version (v$SAM_VERSION)."
-
-            # แม้ไม่มี version ใหม่ ให้ตรวจ hash ว่าไฟล์ถูกแก้ไขหรือเสียหรือเปล่า
-            if ($RemoteHashA -or $RemoteHashS -or $RemoteHashU) {
-                Write-SAMLog "Verifying file hashes against remote..."
-                $HashChecks = @{
-                    $AgentScript     = $RemoteHashA
-                    $SchedulerScript = $RemoteHashS
-                    $UpdateScript    = $RemoteHashU
-                }
-                foreach ($FP in $HashChecks.Keys) {
-                    $ExpHash = $HashChecks[$FP]
-                    if ($ExpHash -and $ExpHash.Length -eq 64) {
-                        $ActHash = Get-FileHash256 $FP
-                        if ($ActHash -ne $ExpHash.ToLower()) {
-                            Write-SAMLog "Hash mismatch detected for $FP — restoring from remote." -Level "WARN"
-                            # ดาวน์โหลดซ่อมจาก URL ที่ตรงกัน
-                            $TargetUrl = switch ($FP) {
-                                $AgentScript     { $AgentUrl }
-                                $SchedulerScript { $SchedulerUrl }
-                                $UpdateScript    { $UpdateUrl }
-                            }
-                            Download-SafeScript -Url $TargetUrl -OutPath $FP -ExpectedHash $ExpHash -Label (Split-Path $FP -Leaf) | Out-Null
-                        }
-                    }
-                }
-            }
-        }
-
-        # บันทึกเวลาตรวจล่าสุด
-        try {
-            @{ LastCheck = (Get-Date).ToString("o"); LastVersion = $RemoteVer } |
-                ConvertTo-Json | Out-File $UpdateStateFile -Encoding UTF8
-        } catch {}
-
-    } catch {
-        Write-SAMLog "Version check failed: $($_.Exception.Message)" -Level "ERROR"
-    }
-}
-
-# ==========================================
-# BATCH HELPER FILES (ถ้าหายไป)
-# ==========================================
-Write-SAMLog "--- Checking helper .bat files ---"
-
-$ForceBat = @'
-@echo off
-color 0A
-title S.A.M. Manual Force Sync
-net session >nul 2>&1
-if %errorLevel% neq 0 (
-    powershell -Command "Start-Process '%~f0' -Verb RunAs"
-    exit /b
-)
-cd /d C:\IT_Support
-if exist "LastState.json" del /q "LastState.json"
-powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "SAM_Agent.ps1" -ForceFullSync
-exit
-'@
-
-$DeepBat = @'
-@echo off
-color 0D
-title S.A.M. Deep Diagnostic Scan
-net session >nul 2>&1
-if %errorLevel% neq 0 (
-    powershell -Command "Start-Process '%~f0' -Verb RunAs"
-    exit /b
-)
-cd /d C:\IT_Support
-powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "SAM_Agent.ps1" -DeepScan
-exit
-'@
-
-$UninstallBat = @'
-@echo off
-color 0C
-title S.A.M. Uninstaller
-net session >nul 2>&1
-if %errorLevel% neq 0 (
-    powershell -Command "Start-Process '%~dpnx0' -Verb RunAs"
-    exit /b
-)
-cd /d C:\
-powershell.exe -ExecutionPolicy Bypass -File "C:\IT_Support\SAM_Scheduler.ps1" -Uninstall
-exit
-'@
-
-$UpdateCheckBat = @'
-@echo off
-color 0B
-title S.A.M. Force Update Check
-net session >nul 2>&1
-if %errorLevel% neq 0 (
-    powershell -Command "Start-Process '%~f0' -Verb RunAs"
-    exit /b
-)
-cd /d C:\IT_Support
-powershell.exe -ExecutionPolicy Bypass -File "SAM_Update.ps1" -ForceCheck
-pause
-exit
-'@
-
-$StatusBat = @'
-@echo off
-color 0E
-title S.A.M. Status
-cd /d C:\IT_Support
-powershell.exe -ExecutionPolicy Bypass -File "SAM_Scheduler.ps1" -Status
-pause
-exit
-'@
-
-$BatFiles = @{
-    "SAM_ForceSync.bat"    = $ForceBat
-    "SAM_DeepScan.bat"     = $DeepBat
-    "SAM_Uninstall.bat"    = $UninstallBat
-    "SAM_UpdateCheck.bat"  = $UpdateCheckBat
-    "SAM_Status.bat"       = $StatusBat
-}
-
-foreach ($BatName in $BatFiles.Keys) {
-    $BatPath = "$WorkDir\$BatName"
-    if (-not (Test-Path $BatPath)) {
-        try {
-            [System.IO.File]::WriteAllText($BatPath, $BatFiles[$BatName], [System.Text.Encoding]::ASCII)
-            Write-SAMLog "Restored helper: $BatName"
-        } catch { Write-SAMLog "Failed to write $BatName" -Level "WARN" }
-    }
-}
-
-# ==========================================
-# DONE
-# ==========================================
-Write-SAMLog "=== SAM Update complete ==="
