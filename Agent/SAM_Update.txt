@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    S.A.M. Update Manager v3.3.0
+    S.A.M. Update Manager v3.1.0
 .DESCRIPTION
     - ตรวจสอบ version ใหม่จาก GitHub
     - Download และ Replace ไฟล์ที่อัปเดต
