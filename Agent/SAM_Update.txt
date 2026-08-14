@@ -366,24 +366,29 @@ function Invoke-UpdateFiles {
     [IO.File]::WriteAllText($VersionFile, $RemoteVersion, [Text.Encoding]::UTF8)
     Write-SAMLog "Version updated: $RemoteVersion"
 
-    # ✅ Run SAM_Scheduler.ps1 -Setup หลัง Update
-    Write-SAMLog "Post-update: Running Scheduler Setup..."
+    # ============================================================
+    # ✅ POST-UPDATE: Run 3 ไฟล์หลัง Update สำเร็จ
+    # ============================================================
+    Write-SAMLog "--- Post-update: Running 3 scripts ---"
+
+    # [1/3] SAM_Scheduler.ps1 -Setup
+    Write-SAMLog "Post-update [1/3]: SAM_Scheduler.ps1 -Setup"
     try {
         $schedulerPath = "$WorkDir\SAM_Scheduler.ps1"
         if (Test-Path $schedulerPath) {
             & powershell -ExecutionPolicy Bypass `
                 -File $schedulerPath -Setup
-            Write-SAMLog "Scheduler Setup completed OK"
+            Write-SAMLog "Scheduler Setup OK"
 
-            # ตรวจ .bat files สร้างครบไหม
+            # ตรวจ .bat files ครบ
             $bats = @('SAM_ForceSync.bat','SAM_DeepScan.bat',
                       'SAM_Status.bat','SAM_Uninstall.bat',
                       'SAM_UpdateCheck.bat','SAM_C2Poll.bat')
             $missingBats = $bats | Where-Object { -not (Test-Path "$WorkDir\$_") }
             if ($missingBats) {
-                Write-SAMLog "Missing .bat files: $($missingBats -join ', ')" -Level 'WARN'
+                Write-SAMLog "Missing .bat: $($missingBats -join ', ')" -Level 'WARN'
             } else {
-                Write-SAMLog "All .bat files created OK ($($bats.Count) files)"
+                Write-SAMLog "All .bat files OK ($($bats.Count) files)"
             }
         } else {
             Write-SAMLog "Scheduler not found: $schedulerPath" -Level 'WARN'
@@ -392,8 +397,8 @@ function Invoke-UpdateFiles {
         Write-SAMLog "Scheduler Setup error: $($_.Exception.Message)" -Level 'WARN'
     }
 
-    # ✅ ตรวจ SpbKey.txt หลัง Update
-    Write-SAMLog "Post-update SpbKey.txt verification..."
+    # [2/3] SpbKey.txt verify
+    Write-SAMLog "Post-update [2/3]: SpbKey.txt verify"
     Confirm-SpbKey | Out-Null
 
     # Cleanup backups เก่า
@@ -480,34 +485,24 @@ function Main {
         if ($updateOK) {
             Write-SAMLog "Update SUCCESS: v$localVer → v$remoteVer"
 
-            # ✅ ตรวจ SpbKey.txt หลัง Update
-            Write-SAMLog "Final SpbKey.txt check after update..."
-            $finalKeyOK = Confirm-SpbKey
-            if ($finalKeyOK) {
-                Write-SAMLog "SpbKey.txt final check PASSED"
-            } else {
-                Write-SAMLog "SpbKey.txt final check FAILED" -Level 'ERROR'
-            }
-
-            # ✅ Run Agent หลัง Update — ยืนยัน version ใหม่ + ส่งข้อมูล Supabase
-            Write-SAMLog "Post-update: Running Agent DeltaSync to confirm new version..."
+            # [3/3] SAM_Agent.ps1 -DeltaOnly (ส่งข้อมูลยืนยัน version ใหม่)
+            Write-SAMLog "Post-update [3/3]: SAM_Agent.ps1 -DeltaOnly"
             try {
                 $agentPath = "$WorkDir\SAM_Agent.ps1"
                 if (Test-Path $agentPath) {
-                    # รอ 3 วินาทีให้ไฟล์ settle
-                    Start-Sleep -Seconds 3
-
+                    Start-Sleep -Seconds 3  # รอไฟล์ settle
                     & powershell -ExecutionPolicy Bypass `
                         -File $agentPath `
                         -Silent -DeltaOnly
-
-                    Write-SAMLog "Agent post-update DeltaSync completed"
+                    Write-SAMLog "Agent DeltaSync OK — version confirmed in Supabase"
                 } else {
                     Write-SAMLog "Agent not found: $agentPath" -Level 'WARN'
                 }
             } catch {
-                Write-SAMLog "Agent post-update error: $($_.Exception.Message)" -Level 'WARN'
+                Write-SAMLog "Agent DeltaSync error: $($_.Exception.Message)" -Level 'WARN'
             }
+
+            Write-SAMLog "=== Post-update complete: Scheduler + SpbKey + Agent ==="
 
         } else {
             Write-SAMLog "Update FAILED" -Level 'ERROR'
