@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    S.A.M. Update Manager v3.3.0
+    S.A.M. Update Manager v3.3.1
 .DESCRIPTION
     - ตรวจสอบ version ใหม่จาก GitHub
     - Download และ Replace ไฟล์ที่อัปเดต
@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 # ============================================================
 # CONSTANTS
 # ============================================================
-$SAM_UPDATE_VERSION = '3.3.0'
+$SAM_UPDATE_VERSION = '3.3.1'
 $WorkDir            = 'C:\IT_Support'
 $LogFile            = "$WorkDir\SAM_Log.txt"
 $VersionFile        = "$WorkDir\version.txt"
@@ -377,7 +377,8 @@ function Invoke-UpdateFiles {
 
             # ตรวจ .bat files สร้างครบไหม
             $bats = @('SAM_ForceSync.bat','SAM_DeepScan.bat',
-                      'SAM_Status.bat','SAM_Uninstall.bat','SAM_UpdateCheck.bat')
+                      'SAM_Status.bat','SAM_Uninstall.bat',
+                      'SAM_UpdateCheck.bat','SAM_C2Poll.bat')
             $missingBats = $bats | Where-Object { -not (Test-Path "$WorkDir\$_") }
             if ($missingBats) {
                 Write-SAMLog "Missing .bat files: $($missingBats -join ', ')" -Level 'WARN'
