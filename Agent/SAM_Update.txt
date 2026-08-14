@@ -454,6 +454,7 @@ function Main {
         if ($updateOK) {
             Write-SAMLog "Update SUCCESS: v$localVer → v$remoteVer"
 
+            # ✅ ตรวจ SpbKey.txt หลัง Update
             Write-SAMLog "Final SpbKey.txt check after update..."
             $finalKeyOK = Confirm-SpbKey
             if ($finalKeyOK) {
@@ -461,6 +462,27 @@ function Main {
             } else {
                 Write-SAMLog "SpbKey.txt final check FAILED" -Level 'ERROR'
             }
+
+            # ✅ Run Agent หลัง Update — ยืนยัน version ใหม่ + ส่งข้อมูล Supabase
+            Write-SAMLog "Post-update: Running Agent DeltaSync to confirm new version..."
+            try {
+                $agentPath = "$WorkDir\SAM_Agent.ps1"
+                if (Test-Path $agentPath) {
+                    # รอ 3 วินาทีให้ไฟล์ settle
+                    Start-Sleep -Seconds 3
+
+                    & powershell -ExecutionPolicy Bypass `
+                        -File $agentPath `
+                        -Silent -DeltaOnly
+
+                    Write-SAMLog "Agent post-update DeltaSync completed"
+                } else {
+                    Write-SAMLog "Agent not found: $agentPath" -Level 'WARN'
+                }
+            } catch {
+                Write-SAMLog "Agent post-update error: $($_.Exception.Message)" -Level 'WARN'
+            }
+
         } else {
             Write-SAMLog "Update FAILED" -Level 'ERROR'
             exit 1
