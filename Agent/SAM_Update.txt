@@ -366,6 +366,31 @@ function Invoke-UpdateFiles {
     [IO.File]::WriteAllText($VersionFile, $RemoteVersion, [Text.Encoding]::UTF8)
     Write-SAMLog "Version updated: $RemoteVersion"
 
+    # ✅ Run SAM_Scheduler.ps1 -Setup หลัง Update
+    Write-SAMLog "Post-update: Running Scheduler Setup..."
+    try {
+        $schedulerPath = "$WorkDir\SAM_Scheduler.ps1"
+        if (Test-Path $schedulerPath) {
+            & powershell -ExecutionPolicy Bypass `
+                -File $schedulerPath -Setup
+            Write-SAMLog "Scheduler Setup completed OK"
+
+            # ตรวจ .bat files สร้างครบไหม
+            $bats = @('SAM_ForceSync.bat','SAM_DeepScan.bat',
+                      'SAM_Status.bat','SAM_Uninstall.bat','SAM_UpdateCheck.bat')
+            $missingBats = $bats | Where-Object { -not (Test-Path "$WorkDir\$_") }
+            if ($missingBats) {
+                Write-SAMLog "Missing .bat files: $($missingBats -join ', ')" -Level 'WARN'
+            } else {
+                Write-SAMLog "All .bat files created OK ($($bats.Count) files)"
+            }
+        } else {
+            Write-SAMLog "Scheduler not found: $schedulerPath" -Level 'WARN'
+        }
+    } catch {
+        Write-SAMLog "Scheduler Setup error: $($_.Exception.Message)" -Level 'WARN'
+    }
+
     # ✅ ตรวจ SpbKey.txt หลัง Update
     Write-SAMLog "Post-update SpbKey.txt verification..."
     Confirm-SpbKey | Out-Null
