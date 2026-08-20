@@ -644,60 +644,114 @@ $CombOS  = "$($OS.Caption) ($ExactOS)"
 
 $CPU = Get-CimInstance Win32_Processor
 
-$MemArray  = Get-CimInstance Win32_PhysicalMemoryArray -ErrorAction SilentlyContinue
+$MemArray   = Get-CimInstance Win32_PhysicalMemoryArray -ErrorAction SilentlyContinue
 $TotalSlots = if ($MemArray -and $MemArray.MemoryDevices) { $MemArray.MemoryDevices } else { 0 }
-$PhyRAM    = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction SilentlyContinue)
-$RamCount  = if ($PhyRAM[0]) { $PhyRAM.Count } else { 0 }
+$PhyRAM     = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction SilentlyContinue)
+$RamCount   = if ($PhyRAM[0]) { $PhyRAM.Count } else { 0 }
 if ($TotalSlots -lt $RamCount) { $TotalSlots = $RamCount }
-if ($TotalSlots -le 0) { $TotalSlots = 2 }
-
-$TotalRAM = 0; $SlotInfos = @($null) * $TotalSlots; $UsedSlots = @()
-
+if ($TotalSlots -le 0)         { $TotalSlots = 2 }
+ 
+$TotalRAM  = 0
+$SlotInfos = @($null) * $TotalSlots
+ 
 foreach ($S in $PhyRAM) {
-    $GB = [math]::Round($S.Capacity/1GB); $TotalRAM += $GB
-    $SMT = $S.SMBIOSMemoryType; $Speed = $S.Speed
+    $GB    = [math]::Round($S.Capacity / 1GB)
+    $TotalRAM += $GB
+    $SMT   = $S.SMBIOSMemoryType
+    $Speed = $S.Speed
+ 
+    # ตรวจ DDR type
     $DDR = switch ($SMT) {
-        34 { 'DDR5' }; 26 { 'DDR4' }; 24 { 'DDR3' }; 21 { 'DDR2' }; 20 { 'DDR' }
+        34 { 'DDR5' }
+        26 { 'DDR4' }
+        24 { 'DDR3' }
+        21 { 'DDR2' }
+        20 { 'DDR'  }
         default {
             if     ($Speed -ge 4800) { 'DDR5' }
             elseif ($Speed -ge 2133) { 'DDR4' }
             elseif ($Speed -ge 800)  { 'DDR3' }
             elseif ($Speed -ge 400)  { 'DDR2' }
-            else   { 'DDR' }
+            else                     { 'DDR'  }
         }
     }
-    $Mfg = ($S.Manufacturer -replace '\s+',' ').Trim()
-    if ($Mfg -match 'Unknown|N/A|^$|Undefined|017A') { $Mfg = '' }
+ 
+    # Manufacturer
+    $Mfg = ($S.Manufacturer -replace '\s+', ' ').Trim()
+    if ($Mfg -match 'Unknown|N/A|^$|Undefined|017A|^0+$') { $Mfg = '' }
+ 
+    # Info string
     $InfoStr = "${GB}GB ${DDR} (${Speed} MHz)"
     if ($Mfg) { $InfoStr += " $Mfg" }
-
-    $Locator = ($S.DeviceLocator -replace '\s+','').Trim()
-    $Bank    = ($S.BankLabel -replace '\s+','').Trim()
-
+ 
+    # Locator
+    $Locator = ($S.DeviceLocator -replace '\s+', '').Trim()
+    $Bank    = ($S.BankLabel     -replace '\s+', '').Trim()
+ 
+    # ============================================================
+    # Slot Index Detection — Priority order
+    # ============================================================
     $SlotIdx = -1
-    if     ($Locator -match 'DIMM[_\s]?(\d+)')       { $SlotIdx = [int]$matches[1] }
-    elseif ($Locator -match 'Channel([A-D])-?DIMM(\d+)') { $SlotIdx = [int]([char]$matches[1]-[char]'A')*2 + [int]$matches[2] }
-    elseif ($Bank    -match 'BANK\s*(\d+)')           { $SlotIdx = [int]$matches[1] }
-    elseif ($Locator -match 'Slot\s*#?(\d+)')         { $SlotIdx = [int]$matches[1] - 1 }
-
-    if ($SlotIdx -lt 0 -or $SlotIdx -ge $TotalSlots) {
-        for ($j=0; $j -lt $TotalSlots; $j++) { if ($null -eq $SlotInfos[$j]) { $SlotIdx = $j; break } }
+ 
+    # Priority 1: ChannelX-DIMMX (e.g. ChannelA-DIMM0, ChannelB-DIMM1)
+    if ($Locator -match 'Channel([A-Da-d])[\-_\s]?DIMM[\-_\s]?(\d+)') {
+        $chNum   = [int]([char]($matches[1].ToUpper()) - [char]'A')
+        $dimmNum = [int]$matches[2]
+        $SlotIdx = $chNum * 2 + $dimmNum
     }
+    # Priority 2: DIMMX (e.g. DIMM0, DIMM1)
+    elseif ($Locator -match 'DIMM[\-_\s]?(\d+)') {
+        $SlotIdx = [int]$matches[1]
+    }
+    # Priority 3: SlotX (e.g. Slot 1, Slot#2)
+    elseif ($Locator -match 'Slot[\s#_]?(\d+)') {
+        $SlotIdx = [int]$matches[1] - 1
+    }
+    # Priority 4: BANKX จาก BankLabel (e.g. BANK 0, BANK 1)
+    elseif ($Bank -match 'BANK[\s#_]?(\d+)') {
+        $SlotIdx = [int]$matches[1]
+    }
+    # Priority 5: ตัวเลขท้าย Locator
+    elseif ($Locator -match '(\d+)$') {
+        $SlotIdx = [int]$matches[1]
+    }
+ 
+    # ถ้า SlotIdx เกินช่วง → หาช่องว่างแรก
+    if ($SlotIdx -lt 0 -or $SlotIdx -ge $TotalSlots) {
+        for ($j = 0; $j -lt $TotalSlots; $j++) {
+            if ($null -eq $SlotInfos[$j]) { $SlotIdx = $j; break }
+        }
+    }
+ 
+    # บันทึก — ป้องกัน overwrite
     if ($SlotIdx -ge 0 -and $SlotIdx -lt $TotalSlots) {
-        $SlotInfos[$SlotIdx] = @{ Loc=$Locator; Info=$InfoStr }
-        $UsedSlots += $SlotIdx
+        if ($null -eq $SlotInfos[$SlotIdx]) {
+            $SlotInfos[$SlotIdx] = @{ Loc = $Locator; Info = $InfoStr }
+        } else {
+            # Slot เต็ม → หาช่องถัดไป
+            for ($j = 0; $j -lt $TotalSlots; $j++) {
+                if ($null -eq $SlotInfos[$j]) {
+                    $SlotInfos[$j] = @{ Loc = $Locator; Info = $InfoStr }
+                    break
+                }
+            }
+        }
     }
 }
-
+ 
+# ============================================================
+# สร้าง RAMStr — format [Slot X: Locator] Info
+# รองรับ Dashboard parse: [bracket] content
+# ============================================================
 $RamList = @()
-for ($i=0; $i -lt $TotalSlots; $i++) {
-    if ($SlotInfos[$i]) {
+for ($i = 0; $i -lt $TotalSlots; $i++) {
+    if ($null -ne $SlotInfos[$i]) {
         $RamList += "[Slot $($i+1): $($SlotInfos[$i].Loc)] $($SlotInfos[$i].Info)"
     } else {
         $RamList += "[Slot $($i+1): Empty]"
     }
 }
-$RAMStr = $RamList -join " | "
+$RAMStr = "$($TotalRAM) GB (" + ($RamList -join " | ")
 
 $CompDesc = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\lanmanserver\parameters" -Name srvcomment -ErrorAction SilentlyContinue).srvcomment
 
