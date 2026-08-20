@@ -1,6 +1,6 @@
 ﻿# ==============================================================================
 # S.A.M. AGENT  (Smart Agent Management - Data Collector & Sync Engine)
-# VERSION     : 3.3.0
+# VERSION     : 3.3.1
 # FILE        : SAM_Agent.ps1
 # ROLE        : เก็บข้อมูลระบบ → เปรียบเทียบ Delta → Sync ไป Supabase
 #               ถูกเรียกโดย SAM_Scheduler เท่านั้น (ไม่รัน Task เอง)
@@ -21,7 +21,7 @@ param(
 # ==========================================
 # CONSTANTS
 # ==========================================
-$SAM_VERSION   = "3.3.0"
+$SAM_VERSION   = "3.3.1"
 $WorkDir       = "C:\IT_Support"
 $LogFile       = "$WorkDir\SAM_Log.txt"
 $StateFile     = "$WorkDir\LastState.json"   # { Hash, FieldHashes, LastFullSync, LastWriteTime }
