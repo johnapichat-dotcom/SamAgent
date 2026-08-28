@@ -1,12 +1,13 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    S.A.M. Update Manager v3.3.1
+    S.A.M. Update Manager v3.3.2
 .DESCRIPTION
     - ตรวจสอบ version ใหม่จาก GitHub
     - Download และ Replace ไฟล์ที่อัปเดต
     - Self-Healing: ตรวจสอบและซ่อมไฟล์สำคัญ (รวม SpbKey.txt)
     - SpbKey.txt: สร้างใหม่อัตโนมัติถ้าหายหรือว่างเปล่า
+    - v3.3.2: Unblock-File ทุกไฟล์หลัง Download (Fix Zone.Identifier)
 #>
 
 Set-StrictMode -Version Latest
@@ -15,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 # ============================================================
 # CONSTANTS
 # ============================================================
-$SAM_UPDATE_VERSION = '3.3.1'
+$SAM_UPDATE_VERSION = '3.3.2'
 $WorkDir            = 'C:\IT_Support'
 $LogFile            = "$WorkDir\SAM_Log.txt"
 $VersionFile        = "$WorkDir\version.txt"
@@ -59,6 +60,9 @@ function Write-SAMLog {
 
 # ============================================================
 # DOWNLOAD HELPER
+# ✅ v3.3.2: เพิ่ม Unblock-File หลัง Download ทุกครั้ง
+#            แก้ปัญหา Zone.Identifier (Mark of the Web)
+#            ที่ทำให้ไฟล์ที่โหลดจาก Internet รันไม่ได้
 # ============================================================
 function Get-SAMFile {
     param(
@@ -71,10 +75,16 @@ function Get-SAMFile {
         try {
             Invoke-WebRequest -Uri $Url -OutFile $OutPath `
                 -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+
+            # ✅ FIX v3.3.2: Unblock ไฟล์ทันทีหลัง Download
+            # ป้องกัน "You do not have permission to open this file"
+            # และ Execution Policy block จาก Zone.Identifier stream
+            Unblock-File -Path $OutPath -ErrorAction SilentlyContinue
+
             if ((Test-Path $OutPath) -and
                 (Get-Item $OutPath).Length -ge ($MinKB * 1KB)) {
                 $sizeKB = [math]::Round((Get-Item $OutPath).Length / 1KB, 1)
-                Write-SAMLog "Downloaded: $(Split-Path $OutPath -Leaf) (${sizeKB}KB)"
+                Write-SAMLog "Downloaded+Unblocked: $(Split-Path $OutPath -Leaf) (${sizeKB}KB)"
                 return $true
             }
             Write-SAMLog "File too small (attempt $i): $OutPath" -Level 'WARN'
@@ -92,11 +102,8 @@ function Get-SAMFile {
 # ============================================================
 function Repair-SpbKeyPermission {
     try {
-        # Reset permission กลับเป็น inherit จาก parent folder
         $result = & icacls $KeyFile /reset 2>&1
         Write-SAMLog "SpbKey.txt permission reset: $result"
-
-        # เพิ่ม SYSTEM + Administrators FullControl
         & icacls $KeyFile /grant "SYSTEM:(F)" 2>&1 | Out-Null
         & icacls $KeyFile /grant "Administrators:(F)" 2>&1 | Out-Null
         Write-SAMLog "SpbKey.txt permission set: SYSTEM + Administrators (F)"
@@ -115,12 +122,10 @@ function Confirm-SpbKey {
 
     $needCreate = $false
 
-    # ตรวจว่าไฟล์มีอยู่
     if (-not (Test-Path $KeyFile)) {
         Write-SAMLog "SpbKey.txt not found" -Level 'WARN'
         $needCreate = $true
     } else {
-        # ✅ แก้: ตรวจ Permission ก่อนอ่าน
         try {
             $keyRaw     = Get-Content $KeyFile -Raw -Encoding UTF8 -ErrorAction Stop
             $keyContent = if ($null -ne $keyRaw) { $keyRaw.Trim() } else { '' }
@@ -139,17 +144,13 @@ function Confirm-SpbKey {
                 return $true
             }
         } catch {
-            # ✅ ถ้า Access Denied → ซ่อม Permission ก่อน แล้วลองอีกครั้ง
             if ($_.Exception.Message -like '*denied*' -or
                 $_.Exception.Message -like '*Access*') {
                 Write-SAMLog "SpbKey.txt permission issue — repairing..." -Level 'WARN'
                 Repair-SpbKeyPermission | Out-Null
-
-                # ลองอ่านอีกครั้งหลังซ่อม Permission
                 try {
                     $keyRaw     = Get-Content $KeyFile -Raw -Encoding UTF8 -ErrorAction Stop
                     $keyContent = if ($null -ne $keyRaw) { $keyRaw.Trim() } else { '' }
-
                     if (-not [string]::IsNullOrWhiteSpace($keyContent) -and
                         $keyContent.Length -ge 100 -and
                         ($keyContent.StartsWith('eyJ') -or $keyContent.StartsWith('sb_'))) {
@@ -168,16 +169,13 @@ function Confirm-SpbKey {
         }
     }
 
-    # สร้างไฟล์ใหม่ถ้าจำเป็น
     if ($needCreate -or $ForceCreate) {
         try {
-            # Backup ไฟล์เดิมถ้ามี
             if (Test-Path $KeyFile) {
                 try {
                     Copy-Item $KeyFile "$KeyFile.bak" -Force -ErrorAction SilentlyContinue
                     Write-SAMLog "SpbKey.txt backed up → SpbKey.txt.bak"
                 } catch {
-                    # ถ้า copy ไม่ได้ (permission) → ลบแล้วสร้างใหม่
                     & icacls $KeyFile /reset 2>&1 | Out-Null
                     & icacls $KeyFile /grant "Administrators:(F)" 2>&1 | Out-Null
                     Remove-Item $KeyFile -Force -ErrorAction SilentlyContinue
@@ -185,10 +183,8 @@ function Confirm-SpbKey {
                 }
             }
 
-            # เขียน Key ใหม่
             [IO.File]::WriteAllText($KeyFile, $EmbeddedKey, [Text.Encoding]::UTF8)
 
-            # ✅ Set permission: SYSTEM + Administrators (ไม่ block inheritance)
             try {
                 & icacls $KeyFile /grant "SYSTEM:(F)" 2>&1 | Out-Null
                 & icacls $KeyFile /grant "Administrators:(F)" 2>&1 | Out-Null
@@ -197,7 +193,6 @@ function Confirm-SpbKey {
                 Write-SAMLog "Permission set skipped: $($_.Exception.Message)" -Level 'WARN'
             }
 
-            # ตรวจสอบหลังเขียน
             $verifyRaw     = Get-Content $KeyFile -Raw -Encoding UTF8 -ErrorAction Stop
             $verifyContent = if ($null -ne $verifyRaw) { $verifyRaw.Trim() } else { '' }
 
@@ -218,12 +213,13 @@ function Confirm-SpbKey {
 
 # ============================================================
 # SELF-HEALING
+# ✅ v3.3.2: เพิ่ม Unblock-File หลัง Move-Item ทุกไฟล์ที่ Heal
 # ============================================================
 function Invoke-SelfHealing {
     Write-SAMLog "--- Self-Healing Check ---"
     $healed = 0
 
-    # 1. SpbKey.txt (สำคัญสุด — ตรวจก่อน)
+    # 1. SpbKey.txt
     Write-SAMLog "Checking SpbKey.txt..."
     $keyOK = Confirm-SpbKey
     if ($keyOK) { $healed++ }
@@ -237,7 +233,9 @@ function Invoke-SelfHealing {
         $tmp = "$WorkDir\SAM_Agent_heal.ps1"
         if (Get-SAMFile $URL_AGENT $tmp $MIN_AGENT) {
             Move-Item $tmp $agentFile -Force
-            Write-SAMLog "SAM_Agent.ps1 healed OK"
+            # ✅ v3.3.2: Unblock หลัง Move-Item (Zone.Identifier อาจติดมากับ tmp)
+            Unblock-File -Path $agentFile -ErrorAction SilentlyContinue
+            Write-SAMLog "SAM_Agent.ps1 healed+unblocked OK"
             $healed++
         }
     } else {
@@ -253,7 +251,9 @@ function Invoke-SelfHealing {
         $tmp = "$WorkDir\SAM_Scheduler_heal.ps1"
         if (Get-SAMFile $URL_SCHEDULER $tmp $MIN_SCHEDULER) {
             Move-Item $tmp $schedulerFile -Force
-            Write-SAMLog "SAM_Scheduler.ps1 healed OK"
+            # ✅ v3.3.2: Unblock หลัง Move-Item
+            Unblock-File -Path $schedulerFile -ErrorAction SilentlyContinue
+            Write-SAMLog "SAM_Scheduler.ps1 healed+unblocked OK"
             $healed++
         }
     } else {
@@ -307,6 +307,7 @@ function Compare-Version {
 
 # ============================================================
 # UPDATE FILES
+# ✅ v3.3.2: เพิ่ม Unblock-File หลัง Move-Item ทุกไฟล์ที่ Replace
 # ============================================================
 function Invoke-UpdateFiles {
     param([string]$RemoteVersion)
@@ -325,7 +326,7 @@ function Invoke-UpdateFiles {
     }
     Write-SAMLog "Backup created: $backupDir"
 
-    # Download
+    # Download (Get-SAMFile จะ Unblock อัตโนมัติแล้ว)
     $downloads = @(
         @{ Url=$URL_AGENT;     Out="$WorkDir\SAM_Agent_new.ps1";     MinKB=$MIN_AGENT },
         @{ Url=$URL_SCHEDULER; Out="$WorkDir\SAM_Scheduler_new.ps1"; MinKB=$MIN_SCHEDULER },
@@ -355,7 +356,9 @@ function Invoke-UpdateFiles {
     foreach ($pair in $replacePairs) {
         try {
             Move-Item $pair.New $pair.Final -Force
-            Write-SAMLog "Replaced: $(Split-Path $pair.Final -Leaf)"
+            # ✅ v3.3.2: Unblock อีกรอบหลัง Move-Item (double-safe)
+            Unblock-File -Path $pair.Final -ErrorAction SilentlyContinue
+            Write-SAMLog "Replaced+Unblocked: $(Split-Path $pair.Final -Leaf)"
             $updated++
         } catch {
             Write-SAMLog "Replace failed: $($pair.Final) — $($_.Exception.Message)" -Level 'ERROR'
@@ -367,7 +370,7 @@ function Invoke-UpdateFiles {
     Write-SAMLog "Version updated: $RemoteVersion"
 
     # ============================================================
-    # ✅ POST-UPDATE: Run 3 ไฟล์หลัง Update สำเร็จ
+    # POST-UPDATE: Run 3 ไฟล์หลัง Update สำเร็จ
     # ============================================================
     Write-SAMLog "--- Post-update: Running 3 scripts ---"
 
@@ -380,7 +383,6 @@ function Invoke-UpdateFiles {
                 -File $schedulerPath -Setup
             Write-SAMLog "Scheduler Setup OK"
 
-            # ตรวจ .bat files ครบ
             $bats = @('SAM_ForceSync.bat','SAM_DeepScan.bat',
                       'SAM_Status.bat','SAM_Uninstall.bat',
                       'SAM_UpdateCheck.bat','SAM_C2Poll.bat')
@@ -485,12 +487,12 @@ function Main {
         if ($updateOK) {
             Write-SAMLog "Update SUCCESS: v$localVer → v$remoteVer"
 
-            # [3/3] SAM_Agent.ps1 -DeltaOnly (ส่งข้อมูลยืนยัน version ใหม่)
+            # [3/3] SAM_Agent.ps1 -DeltaOnly
             Write-SAMLog "Post-update [3/3]: SAM_Agent.ps1 -DeltaOnly"
             try {
                 $agentPath = "$WorkDir\SAM_Agent.ps1"
                 if (Test-Path $agentPath) {
-                    Start-Sleep -Seconds 3  # รอไฟล์ settle
+                    Start-Sleep -Seconds 3
                     & powershell -ExecutionPolicy Bypass `
                         -File $agentPath `
                         -Silent -DeltaOnly
@@ -540,7 +542,6 @@ function Main {
         }
     }
 
-    # SpbKey content check
     if (Test-Path $KeyFile) {
         try {
             $keyRaw = Get-Content $KeyFile -Raw -Encoding UTF8 -ErrorAction Stop
